@@ -3,7 +3,6 @@ use std::io::prelude::*;
 
 use clap::{Arg, Command};
 use pod2::backends::plonky2::primitives::ec::schnorr::SecretKey;
-use serde_json;
 
 // Helper functions for creating common arguments
 fn server_arg() -> Arg {
@@ -84,15 +83,15 @@ fn extract_document_metadata(document: &serde_json::Value) -> (String, String, i
 }
 
 fn print_document_metadata(content_id: &str, created_at: &str, post_id: i64, revision: i64) {
-    println!("Document ID: {}", content_id);
-    println!("Post ID: {}", post_id);
-    println!("Revision: {}", revision);
-    println!("Created: {}", created_at);
+    println!("Document ID: {content_id}");
+    println!("Post ID: {post_id}");
+    println!("Revision: {revision}");
+    println!("Created: {created_at}");
 }
 
 fn handle_error_response(status: reqwest::StatusCode, error_text: &str, operation: &str) {
-    println!("Failed to {}. Status: {}", operation, status);
-    println!("Error: {}", error_text);
+    println!("Failed to {operation}. Status: {status}");
+    println!("Error: {error_text}");
 }
 
 fn create_enhanced_html_document(
@@ -108,7 +107,7 @@ fn create_enhanced_html_document(
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ParcNet Content - Post {}</title>
+    <title>ParcNet Content - Post {id}</title>
     <style>
         body {{
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
@@ -204,18 +203,17 @@ fn create_enhanced_html_document(
     <div class="header">
         <h1>ParcNet Content</h1>
         <div class="metadata">
-            <div><strong>Post ID:</strong> {}</div>
-            <div><strong>Content Hash:</strong> <code>{}</code></div>
-            <div><strong>Timestamp:</strong> {}</div>
+            <div><strong>Post ID:</strong> {id}</div>
+            <div><strong>Content Hash:</strong> <code>{content_id}</code></div>
+            <div><strong>Timestamp:</strong> {timestamp}</div>
         </div>
     </div>
-    {}
+    {revision_links}
     <div class="content">
-        {}
+        {html_content}
     </div>
 </body>
-</html>"#,
-        id, id, content_id, timestamp, revision_links, html_content
+</html>"#
     )
 }
 
@@ -226,7 +224,7 @@ fn create_html_document(id: &str, content_id: &str, timestamp: &str, html_conten
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ParcNet Content - ID {}</title>
+    <title>ParcNet Content - ID {id}</title>
     <style>
         body {{
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
@@ -301,17 +299,16 @@ fn create_html_document(id: &str, content_id: &str, timestamp: &str, html_conten
     <div class="header">
         <h1>ParcNet Content</h1>
         <div class="metadata">
-            <div><strong>ID:</strong> {}</div>
-            <div><strong>Content Hash:</strong> <code>{}</code></div>
-            <div><strong>Timestamp:</strong> {}</div>
+            <div><strong>ID:</strong> {id}</div>
+            <div><strong>Content Hash:</strong> <code>{content_id}</code></div>
+            <div><strong>Timestamp:</strong> {timestamp}</div>
         </div>
     </div>
     <div class="content">
-        {}
+        {html_content}
     </div>
 </body>
-</html>"#,
-        id, id, content_id, timestamp, html_content
+</html>"#
     )
 }
 
@@ -461,9 +458,9 @@ fn generate_keypair(name: &str, output_file: &str) -> Result<(), Box<dyn std::er
     file.write_all(serde_json::to_string_pretty(&keypair_data)?.as_bytes())?;
 
     println!("Generated keypair:");
-    println!("Name: {}", name);
-    println!("Public Key: {}", public_key);
-    println!("Saved to: {}", output_file);
+    println!("Name: {name}");
+    println!("Public Key: {public_key}");
+    println!("Saved to: {output_file}");
 
     Ok(())
 }
@@ -484,7 +481,7 @@ async fn publish_content(
     use pod2::middleware::Params;
 
     println!("Publishing content to server...");
-    println!("Content: {}", content);
+    println!("Content: {content}");
 
     // Calculate content hash (same as server)
     let bytes = content.as_bytes();
@@ -525,7 +522,7 @@ async fn publish_content(
 
     println!("Using keypair: {}", keypair_data["name"]);
     println!("Public key: {}", keypair_data["public_key"]);
-    println!("Content hash: {}", content_hash);
+    println!("Content hash: {content_hash}");
 
     // Create signed pod with the content hash
     let params = Params::default();
@@ -552,7 +549,7 @@ async fn publish_content(
 
     let client = reqwest::Client::new();
     let response = client
-        .post(&format!("{}/publish", server_url))
+        .post(format!("{server_url}/publish"))
         .header("Content-Type", "application/json")
         .json(&payload)
         .send()
@@ -568,8 +565,8 @@ async fn publish_content(
     } else {
         let status = response.status();
         let error_text = response.text().await?;
-        println!("Failed to publish. Status: {}", status);
-        println!("Error: {}", error_text);
+        println!("Failed to publish. Status: {status}");
+        println!("Error: {error_text}");
     }
 
     Ok(())
@@ -589,14 +586,14 @@ fn get_content_from_args(matches: &clap::ArgMatches) -> Result<String, Box<dyn s
 async fn get_post_by_id(post_id: &str, server_url: &str) -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
     let response = client
-        .get(&format!("{}/posts/{}", server_url, post_id))
+        .get(format!("{server_url}/posts/{post_id}"))
         .send()
         .await?;
 
     if response.status().is_success() {
         let post: serde_json::Value = response.json().await?;
 
-        println!("Post ID: {}", post_id);
+        println!("Post ID: {post_id}");
         println!(
             "Created: {}",
             post.get("created_at")
@@ -614,7 +611,7 @@ async fn get_post_by_id(post_id: &str, server_url: &str) -> Result<(), Box<dyn s
             println!("\nDocuments ({} revisions):", documents.len());
             for document in documents {
                 let (content_id, created_at, _, revision) = extract_document_metadata(document);
-                println!("  Revision {}: {} ({})", revision, content_id, created_at);
+                println!("  Revision {revision}: {content_id} ({created_at})");
 
                 if let Some(content) = document.get("content").and_then(|v| v.as_str()) {
                     println!(
@@ -645,7 +642,7 @@ async fn get_document_by_id(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
     let response = client
-        .get(&format!("{}/documents/{}", server_url, document_id))
+        .get(format!("{server_url}/documents/{document_id}"))
         .send()
         .await?;
 
@@ -655,9 +652,9 @@ async fn get_document_by_id(
         if let Some(content) = document.get("content").and_then(|v| v.as_str()) {
             let (content_id, created_at, post_id, revision) = extract_document_metadata(&document);
             print_document_metadata(&content_id, &created_at, post_id, revision);
-            println!("Content:\n{}", content);
+            println!("Content:\n{content}");
         } else {
-            println!("No content found for document ID: {}", document_id);
+            println!("No content found for document ID: {document_id}");
         }
     } else {
         let status = response.status();
@@ -674,7 +671,7 @@ async fn render_document_by_id(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
     let response = client
-        .get(&format!("{}/documents/{}/render", server_url, document_id))
+        .get(format!("{server_url}/documents/{document_id}/render"))
         .send()
         .await?;
 
@@ -684,9 +681,9 @@ async fn render_document_by_id(
         if let Some(content) = document.get("content").and_then(|v| v.as_str()) {
             let (content_id, created_at, post_id, revision) = extract_document_metadata(&document);
             print_document_metadata(&content_id, &created_at, post_id, revision);
-            println!("Rendered HTML:\n{}", content);
+            println!("Rendered HTML:\n{content}");
         } else {
-            println!("No content found for document ID: {}", document_id);
+            println!("No content found for document ID: {document_id}");
         }
     } else {
         let status = response.status();
@@ -709,7 +706,7 @@ async fn view_post_in_browser(
 
     // First get the post with all its documents
     let response = client
-        .get(&format!("{}/posts/{}", server_url, post_id))
+        .get(format!("{server_url}/posts/{post_id}"))
         .send()
         .await?;
 
@@ -725,7 +722,7 @@ async fn view_post_in_browser(
     // Find the latest document (documents are ordered by revision DESC)
     if let Some(documents) = post.get("documents").and_then(|d| d.as_array()) {
         if documents.is_empty() {
-            println!("No documents found for post ID: {}", post_id);
+            println!("No documents found for post ID: {post_id}");
             return Ok(());
         }
 
@@ -738,7 +735,7 @@ async fn view_post_in_browser(
 
         // Now get the rendered version of this document
         let render_response = client
-            .get(&format!("{}/documents/{}/render", server_url, document_id))
+            .get(format!("{server_url}/documents/{document_id}/render"))
             .send()
             .await?;
 
@@ -761,14 +758,14 @@ async fn view_post_in_browser(
             // Verify document pod signature
             if let Some(pod) = rendered_document.get("pod") {
                 if let Err(e) = verify_document_pod_signature(pod, None) {
-                    println!("⚠ Document signature verification failed: {}", e);
+                    println!("⚠ Document signature verification failed: {e}");
                 }
             }
 
             // Verify timestamp pod signature if present
             if let Some(timestamp_pod) = rendered_document.get("timestamp_pod") {
                 if let Err(e) = verify_timestamp_pod_signature(timestamp_pod, &server_public_key) {
-                    println!("⚠ Timestamp signature verification failed: {}", e);
+                    println!("⚠ Timestamp signature verification failed: {e}");
                 }
             }
 
@@ -777,7 +774,7 @@ async fn view_post_in_browser(
             if documents.len() > 1 {
                 revision_links
                     .push_str("<div class=\"revisions\">\n<h3>Other Revisions:</h3>\n<ul>\n");
-                for (_idx, doc) in documents.iter().enumerate() {
+                for doc in documents.iter() {
                     let doc_id = doc.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
                     let doc_revision = doc.get("revision").and_then(|v| v.as_i64()).unwrap_or(0);
                     let doc_created = doc
@@ -787,13 +784,11 @@ async fn view_post_in_browser(
 
                     if doc_revision != revision {
                         revision_links.push_str(&format!(
-                            "<li><a href=\"#{}\">Revision {} ({})</a></li>\n",
-                            doc_id, doc_revision, doc_created
+                            "<li><a href=\"#{doc_id}\">Revision {doc_revision} ({doc_created})</a></li>\n"
                         ));
                     } else {
                         revision_links.push_str(&format!(
-                            "<li><strong>Revision {} ({})</strong> ← Current</li>\n",
-                            doc_revision, doc_created
+                            "<li><strong>Revision {doc_revision} ({doc_created})</strong> ← Current</li>\n"
                         ));
                     }
                 }
@@ -809,32 +804,30 @@ async fn view_post_in_browser(
             );
 
             // Write to a temporary file
-            let temp_file = format!("/tmp/parcnet-post-{}.html", post_id);
+            let temp_file = format!("/tmp/parcnet-post-{post_id}.html");
             std::fs::write(&temp_file, full_html)?;
 
             println!(
-                "Opening latest document from post {} in browser...",
-                post_id
+                "Opening latest document from post {post_id} in browser..."
             );
-            println!("Document ID: {}", content_id);
-            println!("Revision: {}", revision);
-            println!("Created: {}", created_at);
+            println!("Document ID: {content_id}");
+            println!("Revision: {revision}");
+            println!("Created: {created_at}");
 
             // Open in default browser
             if let Err(e) = webbrowser::open(&temp_file) {
-                println!("Failed to open browser: {}", e);
-                println!("HTML file saved to: {}", temp_file);
+                println!("Failed to open browser: {e}");
+                println!("HTML file saved to: {temp_file}");
             } else {
-                println!("Opened in browser: {}", temp_file);
+                println!("Opened in browser: {temp_file}");
             }
         } else {
             println!(
-                "No content found in latest document for post ID: {}",
-                post_id
+                "No content found in latest document for post ID: {post_id}"
             );
         }
     } else {
-        println!("No documents found for post ID: {}", post_id);
+        println!("No documents found for post ID: {post_id}");
     }
 
     Ok(())
@@ -870,8 +863,7 @@ fn print_post_row(post: &serde_json::Value) {
         .unwrap_or_else(|| "N/A".to_string());
 
     println!(
-        "{:<5} {:<20} {:<20} {:<10}",
-        id, created_at, last_edited_at, latest_doc_id
+        "{id:<5} {created_at:<20} {last_edited_at:<20} {latest_doc_id:<10}"
     );
 }
 
@@ -902,14 +894,13 @@ fn print_document_row(document: &serde_json::Value) {
     let signer_short = truncate_string(signer, 40);
 
     println!(
-        "{:<5} {:<7} {:<3} {:<12} {:<20} {:<40}",
-        id, post_id, revision, content_id_short, created_at, signer_short
+        "{id:<5} {post_id:<7} {revision:<3} {content_id_short:<12} {created_at:<20} {signer_short:<40}"
     );
 }
 
 async fn list_posts(server_url: &str) -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
-    let response = client.get(&format!("{}/posts", server_url)).send().await?;
+    let response = client.get(format!("{server_url}/posts")).send().await?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -949,7 +940,7 @@ async fn list_posts(server_url: &str) -> Result<(), Box<dyn std::error::Error>> 
 async fn list_documents(server_url: &str) -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
     let response = client
-        .get(&format!("{}/documents", server_url))
+        .get(format!("{server_url}/documents"))
         .send()
         .await?;
 
@@ -995,7 +986,7 @@ async fn register_user(
     server_url: &str,
     user_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    println!("Registering user {} with server...", user_id);
+    println!("Registering user {user_id} with server...");
 
     // Load keypair from file
     let file = File::open(keypair_file)?;
@@ -1012,7 +1003,7 @@ async fn register_user(
 
     let client = reqwest::Client::new();
     let response = client
-        .post(&format!("{}/register", server_url))
+        .post(format!("{server_url}/register"))
         .header("Content-Type", "application/json")
         .json(&payload)
         .send()
@@ -1020,11 +1011,11 @@ async fn register_user(
 
     if response.status().is_success() {
         let result: serde_json::Value = response.json().await?;
-        println!("Successfully registered user: {}", user_id);
-        println!("Public Key: {}", public_key);
+        println!("Successfully registered user: {user_id}");
+        println!("Public Key: {public_key}");
 
         if let Some(server_pk) = result.get("public_key").and_then(|v| v.as_str()) {
-            println!("Server Public Key: {}", server_pk);
+            println!("Server Public Key: {server_pk}");
         }
     } else {
         let status = response.status();
@@ -1052,12 +1043,11 @@ fn verify_timestamp_pod_signature(
         .get("_signer")
         .ok_or("Timestamp pod missing signer")?;
 
-    let pod_signer_str = format!("{}", pod_signer);
-    let server_public_key = format!("pk:{}", server_public_key);
+    let pod_signer_str = format!("{pod_signer}");
+    let server_public_key = format!("pk:{server_public_key}");
     if pod_signer_str != server_public_key {
         return Err(format!(
-            "Timestamp pod signer {} does not match server public key {}",
-            pod_signer_str, server_public_key
+            "Timestamp pod signer {pod_signer_str} does not match server public key {server_public_key}"
         )
         .into());
     }
@@ -1084,11 +1074,10 @@ fn verify_document_pod_signature(
             .get("_signer")
             .ok_or("Document pod missing signer")?;
 
-        let pod_signer_str = format!("{}", pod_signer);
+        let pod_signer_str = format!("{pod_signer}");
         if pod_signer_str != expected {
             return Err(format!(
-                "Document pod signer {} does not match expected {}",
-                pod_signer_str, expected
+                "Document pod signer {pod_signer_str} does not match expected {expected}"
             )
             .into());
         }
