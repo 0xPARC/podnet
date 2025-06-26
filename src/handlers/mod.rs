@@ -58,7 +58,7 @@ fn verify_public_key(pod: &serde_json::Value, provided_public_key: &str) -> Resu
 pub async fn root() -> Json<ServerInfo> {
     let server_pk = crate::mainpod::get_server_public_key();
     Json(ServerInfo {
-        public_key: format!("{}", server_pk),
+        public_key: format!("{server_pk}"),
     })
 }
 
@@ -274,7 +274,7 @@ pub async fn publish_document(
     log::info!("Verifying user registration");
     let user = state.db.get_user_by_public_key(&payload.public_key)
         .map_err(|e| {
-            log::error!("Database error checking user registration: {}", e);
+            log::error!("Database error checking user registration: {e}");
             StatusCode::INTERNAL_SERVER_ERROR
         })?
         .ok_or_else(|| {
@@ -287,13 +287,13 @@ pub async fn publish_document(
     log::info!("Verifying document pod signature");
     let signed_pod: pod2::frontend::SignedPod = serde_json::from_value(payload.signed_pod.clone())
         .map_err(|e| {
-            log::error!("Failed to deserialize signed pod for verification: {}", e);
+            log::error!("Failed to deserialize signed pod for verification: {e}");
             StatusCode::BAD_REQUEST
         })?;
     
     signed_pod.verify()
         .map_err(|e| {
-            log::error!("Document pod signature verification failed: {}", e);
+            log::error!("Document pod signature verification failed: {e}");
             StatusCode::UNAUTHORIZED
         })?;
     log::info!("Document pod signature verified");
@@ -302,16 +302,16 @@ pub async fn publish_document(
     log::info!("Storing content in content-addressed storage");
     let content_hash = state.storage.store(&payload.content)
         .map_err(|e| {
-            log::error!("Failed to store content: {}", e);
+            log::error!("Failed to store content: {e}");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-    log::info!("Content stored successfully with hash: {}", content_hash);
+    log::info!("Content stored successfully with hash: {content_hash}");
 
     // Convert signed pod to JSON string
     log::info!("Converting signed pod to JSON");
     let pod_json = serde_json::to_string(&payload.signed_pod)
         .map_err(|e| {
-            log::error!("Failed to convert pod to JSON: {}", e);
+            log::error!("Failed to convert pod to JSON: {e}");
             StatusCode::BAD_REQUEST
         })?;
     log::info!("Pod JSON conversion successful");
@@ -320,40 +320,40 @@ pub async fn publish_document(
     log::info!("Determining post ID");
     let post_id = match payload.post_id {
         Some(id) => {
-            log::info!("Using existing post ID: {}", id);
+            log::info!("Using existing post ID: {id}");
             // Verify the post exists
             state.db.get_post(id)
                 .map_err(|e| {
-                    log::error!("Database error checking post {}: {}", id, e);
+                    log::error!("Database error checking post {id}: {e}");
                     StatusCode::INTERNAL_SERVER_ERROR
                 })?
                 .ok_or_else(|| {
-                    log::error!("Post {} not found", id);
+                    log::error!("Post {id} not found");
                     StatusCode::NOT_FOUND
                 })?;
-            log::info!("Post {} exists", id);
+            log::info!("Post {id} exists");
             id
         }
         None => {
             log::info!("Creating new post");
             let id = state.db.create_post()
                 .map_err(|e| {
-                    log::error!("Failed to create new post: {}", e);
+                    log::error!("Failed to create new post: {e}");
                     StatusCode::INTERNAL_SERVER_ERROR
                 })?;
-            log::info!("New post created with ID: {}", id);
+            log::info!("New post created with ID: {id}");
             id
         }
     };
 
     // Create document (revision) for the post
-    log::info!("Creating document for post {}", post_id);
+    log::info!("Creating document for post {post_id}");
     let document_id = state.db.create_document(&content_hash, post_id, &pod_json)
         .map_err(|e| {
-            log::error!("Failed to create document: {}", e);
+            log::error!("Failed to create document: {e}");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-    log::info!("Document created with ID: {}", document_id);
+    log::info!("Document created with ID: {document_id}");
 
     // Create timestamp pod
     log::info!("Creating timestamp pod");
@@ -366,7 +366,7 @@ pub async fn publish_document(
 
         state.db.update_document_timestamp_pod(document_id, &timestamp_pod_json)
             .map_err(|e| {
-                log::error!("Failed to update document timestamp pod: {}", e);
+                log::error!("Failed to update document timestamp pod: {e}");
                 StatusCode::INTERNAL_SERVER_ERROR
             })?;
         log::info!("Updated document with timestamp pod");
@@ -376,18 +376,18 @@ pub async fn publish_document(
 
     let document = state.db.get_document(document_id)
         .map_err(|e| {
-            log::error!("Failed to retrieve created document {}: {}", document_id, e);
+            log::error!("Failed to retrieve created document {document_id}: {e}");
             StatusCode::INTERNAL_SERVER_ERROR
         })?
         .ok_or_else(|| {
-            log::error!("Document {} not found after creation", document_id);
+            log::error!("Document {document_id} not found after creation");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
     log::info!("Retrieved created document");
     let pod_value: serde_json::Value = serde_json::from_str(&document.pod)
         .map_err(|e| {
-            log::error!("Failed to parse document pod JSON: {}", e);
+            log::error!("Failed to parse document pod JSON: {e}");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
@@ -438,6 +438,6 @@ pub async fn register_user(
     // Return server info
     let server_pk = crate::mainpod::get_server_public_key();
     Ok(Json(ServerInfo {
-        public_key: format!("{}", server_pk),
+        public_key: format!("{server_pk}"),
     }))
 }

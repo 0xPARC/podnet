@@ -29,11 +29,11 @@ fn load_or_generate_server_key() -> SecretKey {
         // Load existing key
         if let Ok(key_data) = fs::read_to_string(key_path) {
             if let Some(key_bigint) = BigUint::parse_bytes(key_data.trim().as_bytes(), 10) {
-                log::info!("Loaded existing server key from {}", key_path);
+                log::info!("Loaded existing server key from {key_path}");
                 return SecretKey(key_bigint);
             }
         }
-        log::warn!("Failed to load server key from {}, generating new one", key_path);
+        log::warn!("Failed to load server key from {key_path}, generating new one");
     }
     
     // Generate new key
@@ -46,9 +46,9 @@ fn load_or_generate_server_key() -> SecretKey {
     
     // Save the key
     if let Err(e) = fs::write(key_path, secret_key.0.to_string()) {
-        log::error!("Failed to save server key to {}: {}", key_path, e);
+        log::error!("Failed to save server key to {key_path}: {e}");
     } else {
-        log::info!("Saved server key to {}", key_path);
+        log::info!("Saved server key to {key_path}");
     }
     
     secret_key
@@ -73,15 +73,15 @@ pub fn create_timestamp_pod(
         .get(KEY_SIGNER)
         .ok_or("Document pod missing signer")?;
 
-    log::info!("Document pod content_hash: {}", doc_content_hash);
-    log::info!("Document pod signer: {}", doc_signer);
+    log::info!("Document pod content_hash: {doc_content_hash}");
+    log::info!("Document pod signer: {doc_signer}");
 
     // The content hash verification will be done in the main pod proof
     // For now, just proceed with creating the timestamp pod
 
     // Create timestamp pod signed by server
     let timestamp = Utc::now().to_rfc3339();
-    log::info!("Creating timestamp pod with timestamp: {}", timestamp);
+    log::info!("Creating timestamp pod with timestamp: {timestamp}");
 
     let mut timestamp_builder = SignedPodBuilder::new(&params);
     timestamp_builder.insert("document-pod", document_pod.id());
