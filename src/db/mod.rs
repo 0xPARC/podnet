@@ -1,6 +1,6 @@
-use rusqlite::{Connection, Result, OptionalExtension};
+use crate::models::{Document, Post, User};
+use rusqlite::{Connection, OptionalExtension, Result};
 use std::sync::Mutex;
-use crate::models::{Post, PodEntry};
 
 pub struct Database {
     conn: Mutex<Connection>,
@@ -9,146 +9,291 @@ pub struct Database {
 impl Database {
     pub async fn new(db_path: &str) -> anyhow::Result<Self> {
         let conn = Connection::open(db_path)?;
-        let db = Database { conn: Mutex::new(conn) };
+        let db = Database {
+            conn: Mutex::new(conn),
+        };
         db.init_tables()?;
         Ok(db)
     }
 
     fn init_tables(&self) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+
+        // Create posts table
         conn.execute(
-            "CREATE TABLE IF NOT EXISTS pod_entries (
+            "CREATE TABLE IF NOT EXISTS posts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                content_id TEXT NOT NULL,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                pod TEXT NOT NULL
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                last_edited_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )",
             [],
+        )?;
+
+        // Create documents table (revisions of posts)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS documents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                content_id TEXT NOT NULL,
+                post_id INTEGER NOT NULL,
+                revision INTEGER NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                pod TEXT NOT NULL,
+                timestamp_pod TEXT,
+                FOREIGN KEY (post_id) REFERENCES posts (id),
+                UNIQUE (post_id, revision)
+            )",
+            [],
+        )?;
+
+        // Create users table
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL UNIQUE,
+                public_key TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )",
+            [],
+        )?;
+
+        Ok(())
+    }
+
+    // Post methods
+    pub fn create_post(&self) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("INSERT INTO posts DEFAULT VALUES", [])?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn get_post(&self, id: i64) -> Result<Option<Post>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt =
+            conn.prepare("SELECT id, created_at, last_edited_at FROM posts WHERE id = ?1")?;
+
+        let post = stmt
+            .query_row([id], |row| {
+                Ok(Post {
+                    id: Some(row.get(0)?),
+                    created_at: Some(row.get(1)?),
+                    last_edited_at: Some(row.get(2)?),
+                })
+            })
+            .optional()?;
+
+        Ok(post)
+    }
+
+    pub fn get_all_posts(&self) -> Result<Vec<Post>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, created_at, last_edited_at FROM posts ORDER BY last_edited_at DESC",
+        )?;
+
+        let posts = stmt
+            .query_map([], |row| {
+                Ok(Post {
+                    id: Some(row.get(0)?),
+                    created_at: Some(row.get(1)?),
+                    last_edited_at: Some(row.get(2)?),
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(posts)
+    }
+
+    pub fn update_post_last_edited(&self, post_id: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE posts SET last_edited_at = CURRENT_TIMESTAMP WHERE id = ?1",
+            [post_id],
         )?;
         Ok(())
     }
 
-    pub fn create_pod_entry(&self, content_id: &str, pod_json: &str) -> Result<i64> {
+    // Document methods
+    pub fn create_document(&self, content_id: &str, post_id: i64, pod_json: &str) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+
+        // Get the next revision number for this post
+        let next_revision: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(revision), 0) + 1 FROM documents WHERE post_id = ?1",
+            [post_id],
+            |row| row.get(0),
+        )?;
+
+        conn.execute(
+            "INSERT INTO documents (content_id, post_id, revision, pod) VALUES (?1, ?2, ?3, ?4)",
+            [
+                content_id,
+                &post_id.to_string(),
+                &next_revision.to_string(),
+                pod_json,
+            ],
+        )?;
+
+        // Update the post's last_edited_at timestamp (within same connection lock)
+        conn.execute(
+            "UPDATE posts SET last_edited_at = CURRENT_TIMESTAMP WHERE id = ?1",
+            [post_id],
+        )?;
+
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn update_document_timestamp_pod(&self, document_id: i64, timestamp_pod_json: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO pod_entries (content_id, pod) VALUES (?1, ?2)",
-            [content_id, pod_json],
+            "UPDATE documents SET timestamp_pod = ?1 WHERE id = ?2",
+            [timestamp_pod_json, &document_id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_document(&self, id: i64) -> Result<Option<Document>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod FROM documents WHERE id = ?1"
+        )?;
+
+        let document = stmt
+            .query_row([id], |row| {
+                Ok(Document {
+                    id: Some(row.get(0)?),
+                    content_id: row.get(1)?,
+                    post_id: row.get(2)?,
+                    revision: row.get(3)?,
+                    created_at: Some(row.get(4)?),
+                    pod: row.get(5)?,
+                    timestamp_pod: row.get(6)?,
+                })
+            })
+            .optional()?;
+
+        Ok(document)
+    }
+
+    pub fn get_documents_by_post_id(&self, post_id: i64) -> Result<Vec<Document>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod 
+             FROM documents WHERE post_id = ?1 ORDER BY revision DESC",
+        )?;
+
+        let documents = stmt
+            .query_map([post_id], |row| {
+                Ok(Document {
+                    id: Some(row.get(0)?),
+                    content_id: row.get(1)?,
+                    post_id: row.get(2)?,
+                    revision: row.get(3)?,
+                    created_at: Some(row.get(4)?),
+                    pod: row.get(5)?,
+                    timestamp_pod: row.get(6)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(documents)
+    }
+
+    pub fn get_latest_document_by_post_id(&self, post_id: i64) -> Result<Option<Document>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod 
+             FROM documents WHERE post_id = ?1 ORDER BY revision DESC LIMIT 1",
+        )?;
+
+        let document = stmt
+            .query_row([post_id], |row| {
+                Ok(Document {
+                    id: Some(row.get(0)?),
+                    content_id: row.get(1)?,
+                    post_id: row.get(2)?,
+                    revision: row.get(3)?,
+                    created_at: Some(row.get(4)?),
+                    pod: row.get(5)?,
+                    timestamp_pod: row.get(6)?,
+                })
+            })
+            .optional()?;
+
+        Ok(document)
+    }
+
+    pub fn get_all_documents(&self) -> Result<Vec<Document>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod 
+             FROM documents ORDER BY created_at DESC",
+        )?;
+
+        let documents = stmt
+            .query_map([], |row| {
+                Ok(Document {
+                    id: Some(row.get(0)?),
+                    content_id: row.get(1)?,
+                    post_id: row.get(2)?,
+                    revision: row.get(3)?,
+                    created_at: Some(row.get(4)?),
+                    pod: row.get(5)?,
+                    timestamp_pod: row.get(6)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(documents)
+    }
+
+    // User methods
+    pub fn create_user(&self, user_id: &str, public_key: &str) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO users (user_id, public_key) VALUES (?1, ?2)",
+            [user_id, public_key],
         )?;
         Ok(conn.last_insert_rowid())
     }
 
-    pub fn get_pod_entry(&self, id: i64) -> Result<Option<PodEntry>> {
+    pub fn get_user_by_id(&self, user_id: &str) -> Result<Option<User>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, content_id, timestamp, pod FROM pod_entries WHERE id = ?1"
+            "SELECT id, user_id, public_key, created_at FROM users WHERE user_id = ?1"
         )?;
-        
-        let entry = stmt.query_row([id], |row| {
-            Ok(PodEntry {
-                id: Some(row.get(0)?),
-                content_id: row.get(1)?,
-                timestamp: Some(row.get(2)?),
-                pod: row.get(3)?,
+
+        let user = stmt
+            .query_row([user_id], |row| {
+                Ok(User {
+                    id: Some(row.get(0)?),
+                    user_id: row.get(1)?,
+                    public_key: row.get(2)?,
+                    created_at: Some(row.get(3)?),
+                })
             })
-        }).optional()?;
-        
-        Ok(entry)
+            .optional()?;
+
+        Ok(user)
     }
 
-    pub fn get_all_pod_entries(&self) -> Result<Vec<PodEntry>> {
+    pub fn get_user_by_public_key(&self, public_key: &str) -> Result<Option<User>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, content_id, timestamp, pod FROM pod_entries ORDER BY timestamp DESC"
+            "SELECT id, user_id, public_key, created_at FROM users WHERE public_key = ?1"
         )?;
-        
-        let entries = stmt.query_map([], |row| {
-            Ok(PodEntry {
-                id: Some(row.get(0)?),
-                content_id: row.get(1)?,
-                timestamp: Some(row.get(2)?),
-                pod: row.get(3)?,
+
+        let user = stmt
+            .query_row([public_key], |row| {
+                Ok(User {
+                    id: Some(row.get(0)?),
+                    user_id: row.get(1)?,
+                    public_key: row.get(2)?,
+                    created_at: Some(row.get(3)?),
+                })
             })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-        
-        Ok(entries)
-    }
+            .optional()?;
 
-    pub fn get_pod_entries_by_content_id(&self, content_id: &str) -> Result<Vec<PodEntry>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, content_id, timestamp, pod FROM pod_entries WHERE content_id = ?1 ORDER BY timestamp DESC"
-        )?;
-        
-        let entries = stmt.query_map([content_id], |row| {
-            Ok(PodEntry {
-                id: Some(row.get(0)?),
-                content_id: row.get(1)?,
-                timestamp: Some(row.get(2)?),
-                pod: row.get(3)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-        
-        Ok(entries)
-    }
-
-    // Legacy methods for compatibility
-    pub fn create_post(&self, title: &str, content_hash: &str) -> Result<i64> {
-        // For now, create a dummy pod entry for legacy support
-        let pod_json = serde_json::json!({
-            "legacy": true,
-            "title": title
-        }).to_string();
-        self.create_pod_entry(content_hash, &pod_json)
-    }
-
-    pub fn get_post(&self, id: i64) -> Result<Option<Post>> {
-        match self.get_pod_entry(id)? {
-            Some(entry) => {
-                // Convert pod entry back to legacy post format
-                if let Ok(pod) = serde_json::from_str::<serde_json::Value>(&entry.pod) {
-                    let title = pod.get("title")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("Untitled")
-                        .to_string();
-                    
-                    Ok(Some(Post {
-                        id: entry.id,
-                        title,
-                        content_hash: entry.content_id,
-                        created_at: entry.timestamp,
-                    }))
-                } else {
-                    Ok(None)
-                }
-            }
-            None => Ok(None),
-        }
-    }
-
-    pub fn get_all_posts(&self) -> Result<Vec<Post>> {
-        let entries = self.get_all_pod_entries()?;
-        let mut posts = Vec::new();
-        
-        for entry in entries {
-            if let Ok(pod) = serde_json::from_str::<serde_json::Value>(&entry.pod) {
-                if pod.get("legacy").and_then(|v| v.as_bool()).unwrap_or(false) {
-                    let title = pod.get("title")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("Untitled")
-                        .to_string();
-                    
-                    posts.push(Post {
-                        id: entry.id,
-                        title,
-                        content_hash: entry.content_id,
-                        created_at: entry.timestamp,
-                    });
-                }
-            }
-        }
-        
-        Ok(posts)
+        Ok(user)
     }
 }
+
