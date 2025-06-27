@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use pod2::backends::plonky2::primitives::ec::curve::Point as PublicKey;
-use pod2::frontend::SignedPod;
+use pod2::frontend::{MainPod, SignedPod};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Post {
@@ -58,18 +58,18 @@ pub struct DocumentMetadata {
 #[derive(Debug, Deserialize)]
 pub struct PublishRequest {
     pub content: String,
-    /// Document pod containing:
-    /// - content_hash: String (Poseidon hash of content)
-    /// - timestamp: i64 (Unix timestamp when document was created)
-    /// - post_id: Option<i64> (if provided, add as new revision to existing post)
-    /// - _signer: Point (author's public key, automatically added by SignedPod)
-    pub signed_pod: SignedPod,
-    /// Identity pod from identity server containing:
-    /// - username: String (user's chosen username)
-    /// - user_public_key: Point (user's public key, should match document pod signer)
-    /// - identity_server_id: String (ID of the identity server that issued this)
-    /// - _signer: Point (identity server's public key, automatically added by SignedPod)
-    pub identity_pod: SignedPod,
+    /// Main pod that proves:
+    /// - Identity verification: identity pod was signed by registered identity server
+    /// - Document verification: document pod was signed by user from identity pod  
+    /// - Cross verification: document signer matches identity user_public_key
+    /// - Content hash verification: document pod contains correct content hash
+    ///
+    /// Public data exposed by main pod:
+    /// - username: String (verified username from identity pod)
+    /// - content_hash: String (verified Poseidon hash of content)
+    /// - user_public_key: Point (verified user public key)
+    /// - identity_server_pk: Point (verified identity server public key)
+    pub main_pod: MainPod,
 }
 
 #[derive(Debug, Serialize)]
@@ -100,8 +100,8 @@ pub struct User {
 pub struct IdentityServer {
     pub id: Option<i64>,
     pub server_id: String,
-    pub public_key: String,        // Stored as string in DB
-    pub registration_pod: String,  // Complete signed pod as JSON string
+    pub public_key: String,       // Stored as string in DB
+    pub registration_pod: String, // Complete signed pod as JSON string
     pub created_at: Option<String>,
 }
 

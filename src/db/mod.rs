@@ -41,7 +41,6 @@ impl Database {
                 timestamp_pod TEXT,
                 user_id TEXT NOT NULL,
                 FOREIGN KEY (post_id) REFERENCES posts (id),
-                FOREIGN KEY (user_id) REFERENCES users (user_id),
                 UNIQUE (post_id, revision)
             )",
             [],
@@ -133,6 +132,7 @@ impl Database {
         post_id: i64,
         pod_json: &str,
         user_id: &str,
+        timestamp_pod_json: &str,
     ) -> Result<i64> {
         let conn = self.conn.lock().unwrap();
 
@@ -144,12 +144,13 @@ impl Database {
         )?;
 
         conn.execute(
-            "INSERT INTO documents (content_id, post_id, revision, pod, user_id) VALUES (?1, ?2, ?3, ?4, ?5)",
-            [
+            "INSERT INTO documents (content_id, post_id, revision, pod, timestamp_pod, user_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![
                 content_id,
-                &post_id.to_string(),
-                &next_revision.to_string(),
+                post_id,
+                next_revision,
                 pod_json,
+                timestamp_pod_json,
                 user_id,
             ],
         )?;
