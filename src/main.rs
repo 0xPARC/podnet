@@ -1,7 +1,7 @@
 mod db;
 mod handlers;
-mod mainpod;
 mod models;
+mod pod;
 mod storage;
 
 use axum::{
@@ -19,13 +19,13 @@ pub struct AppState {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
-    
+
     log::info!("Starting PodNet Server...");
-    
+
     log::info!("Initializing database...");
     let db = Arc::new(db::Database::new("app.db").await?);
     log::info!("Database initialized successfully");
-    
+
     log::info!("Initializing content storage...");
     let storage = Arc::new(storage::ContentAddressedStorage::new("content")?);
     log::info!("Content storage initialized successfully");
@@ -41,7 +41,10 @@ async fn main() -> anyhow::Result<()> {
         // Document routes
         .route("/documents", get(handlers::get_documents))
         .route("/documents/:id", get(handlers::get_document_by_id))
-        .route("/documents/:id/render", get(handlers::get_rendered_document_by_id))
+        .route(
+            "/documents/:id/render",
+            get(handlers::get_rendered_document_by_id),
+        )
         // Publishing route
         .route("/publish", post(handlers::publish_document))
         // User registration

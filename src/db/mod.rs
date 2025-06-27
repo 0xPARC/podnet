@@ -39,7 +39,9 @@ impl Database {
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 pod TEXT NOT NULL,
                 timestamp_pod TEXT,
+                user_id TEXT NOT NULL,
                 FOREIGN KEY (post_id) REFERENCES posts (id),
+                FOREIGN KEY (user_id) REFERENCES users (user_id),
                 UNIQUE (post_id, revision)
             )",
             [],
@@ -113,7 +115,13 @@ impl Database {
     }
 
     // Document methods
-    pub fn create_document(&self, content_id: &str, post_id: i64, pod_json: &str) -> Result<i64> {
+    pub fn create_document(
+        &self,
+        content_id: &str,
+        post_id: i64,
+        pod_json: &str,
+        user_id: &str,
+    ) -> Result<i64> {
         let conn = self.conn.lock().unwrap();
 
         // Get the next revision number for this post
@@ -124,12 +132,13 @@ impl Database {
         )?;
 
         conn.execute(
-            "INSERT INTO documents (content_id, post_id, revision, pod) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO documents (content_id, post_id, revision, pod, user_id) VALUES (?1, ?2, ?3, ?4, ?5)",
             [
                 content_id,
                 &post_id.to_string(),
                 &next_revision.to_string(),
                 pod_json,
+                user_id,
             ],
         )?;
 
@@ -142,7 +151,11 @@ impl Database {
         Ok(conn.last_insert_rowid())
     }
 
-    pub fn update_document_timestamp_pod(&self, document_id: i64, timestamp_pod_json: &str) -> Result<()> {
+    pub fn update_document_timestamp_pod(
+        &self,
+        document_id: i64,
+        timestamp_pod_json: &str,
+    ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "UPDATE documents SET timestamp_pod = ?1 WHERE id = ?2",
@@ -154,7 +167,7 @@ impl Database {
     pub fn get_document(&self, id: i64) -> Result<Option<Document>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod FROM documents WHERE id = ?1"
+            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod, user_id FROM documents WHERE id = ?1"
         )?;
 
         let document = stmt
@@ -167,6 +180,7 @@ impl Database {
                     created_at: Some(row.get(4)?),
                     pod: row.get(5)?,
                     timestamp_pod: row.get(6)?,
+                    user_id: row.get(7)?,
                 })
             })
             .optional()?;
@@ -177,7 +191,7 @@ impl Database {
     pub fn get_documents_by_post_id(&self, post_id: i64) -> Result<Vec<Document>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod 
+            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod, user_id 
              FROM documents WHERE post_id = ?1 ORDER BY revision DESC",
         )?;
 
@@ -191,6 +205,7 @@ impl Database {
                     created_at: Some(row.get(4)?),
                     pod: row.get(5)?,
                     timestamp_pod: row.get(6)?,
+                    user_id: row.get(7)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -201,7 +216,7 @@ impl Database {
     pub fn get_latest_document_by_post_id(&self, post_id: i64) -> Result<Option<Document>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod 
+            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod, user_id 
              FROM documents WHERE post_id = ?1 ORDER BY revision DESC LIMIT 1",
         )?;
 
@@ -215,6 +230,7 @@ impl Database {
                     created_at: Some(row.get(4)?),
                     pod: row.get(5)?,
                     timestamp_pod: row.get(6)?,
+                    user_id: row.get(7)?,
                 })
             })
             .optional()?;
@@ -225,7 +241,7 @@ impl Database {
     pub fn get_all_documents(&self) -> Result<Vec<Document>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod 
+            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod, user_id 
              FROM documents ORDER BY created_at DESC",
         )?;
 
@@ -239,6 +255,7 @@ impl Database {
                     created_at: Some(row.get(4)?),
                     pod: row.get(5)?,
                     timestamp_pod: row.get(6)?,
+                    user_id: row.get(7)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -258,9 +275,8 @@ impl Database {
 
     pub fn get_user_by_id(&self, user_id: &str) -> Result<Option<User>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, user_id, public_key, created_at FROM users WHERE user_id = ?1"
-        )?;
+        let mut stmt = conn
+            .prepare("SELECT id, user_id, public_key, created_at FROM users WHERE user_id = ?1")?;
 
         let user = stmt
             .query_row([user_id], |row| {
@@ -279,7 +295,7 @@ impl Database {
     pub fn get_user_by_public_key(&self, public_key: &str) -> Result<Option<User>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, user_id, public_key, created_at FROM users WHERE public_key = ?1"
+            "SELECT id, user_id, public_key, created_at FROM users WHERE public_key = ?1",
         )?;
 
         let user = stmt
@@ -296,4 +312,3 @@ impl Database {
         Ok(user)
     }
 }
-
