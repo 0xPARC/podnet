@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-axum = "0.7"
+axum = { version = "0.7", features = ["macros"]}
 tokio = { version = "1.0", features = ["full"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 pulldown-cmark = "0.10"
@@ -21,3 +21,4 @@ pod2 = { git = "https://github.com/0xPARC/pod2.git" }
 num-bigint = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
 plonky2 = { git = "https://github.com/0xPolygonZero/plonky2.git" }
+pod-utils = { path = "../pod-utils" }

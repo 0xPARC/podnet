@@ -49,6 +49,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/publish", post(handlers::publish_document))
         // User registration
         .route("/register", post(handlers::register_user))
+        // Identity server routes
+        .route(
+            "/identity/register",
+            post(handlers::register_identity_server),
+        )
         .layer(CorsLayer::permissive())
         .with_state(state);
 
@@ -64,6 +69,7 @@ async fn main() -> anyhow::Result<()> {
     log::info!("  GET  /documents/:id/render   - Get rendered document HTML");
     log::info!("  POST /publish                - Publish new document");
     log::info!("  POST /register               - Register user with public key");
+    log::info!("  POST /identity/register      - Register identity server");
 
     axum::serve(listener, app).await?;
     Ok(())

@@ -135,6 +135,7 @@ checksum = "edca88bc138befd0323b20752846e6587272d3b03b0343c8ea28a6f819e6e71f"
 dependencies = [
  "async-trait",
  "axum-core",
+ "axum-macros",
  "bytes",
  "futures-util",
  "http",
@@ -180,6 +181,17 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
+]
+
+[[package]]
+name = "axum-macros"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57d123550fa8d071b7255cb0cc04dc302baa6c8c4a79f55701552684d8399bce"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.104",
 ]
 
 [[package]]
@@ -1059,9 +1071,16 @@ version = "1.0.0"
 source = "git+https://github.com/0xPolygonZero/plonky2.git#82791c4809d6275682c34b926390ecdbdc2a5297"
 
 [[package]]
+name = "pod-utils"
+version = "0.1.0"
+dependencies = [
+ "pod2",
+]
+
+[[package]]
 name = "pod2"
 version = "0.1.0"
-source = "git+https://github.com/0xPARC/pod2.git#115c3c11524a0426a1b74db26ea0c78bf90bddb8"
+source = "git+https://github.com/0xPARC/pod2.git#3306f360f794c6a2d06043342bbf98ed343fdd94"
 dependencies = [
  "anyhow",
  "base64",
@@ -1099,6 +1118,7 @@ dependencies = [
  "log",
  "num-bigint",
  "plonky2",
+ "pod-utils",
  "pod2",
  "pulldown-cmark",
  "rusqlite",

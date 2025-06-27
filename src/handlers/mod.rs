@@ -14,9 +14,10 @@ use pod2::{
 };
 
 use crate::models::{
-    DocumentMetadata, DocumentWithContent, PostWithDocuments, PublishRequest, ServerInfo,
-    UserRegistration,
+    DocumentMetadata, DocumentWithContent, IdentityServerRegistration, PostWithDocuments,
+    PublishRequest, ServerInfo, UserRegistration,
 };
+use pod_utils::ValueExt;
 
 /// This function ensures the signed pod json has the expected podType array
 /// which gives its type as a number and "Signed" string.
@@ -300,51 +301,135 @@ pub async fn publish_document(
 ) -> Result<Json<DocumentWithContent>, StatusCode> {
     log::info!("Starting document publish");
     log::debug!("Content length: {} bytes", payload.content.len());
-    log::debug!("Post ID: {:?}", payload.post_id);
+    // Extract post_id from the signed pod
+    let post_id = payload.signed_pod.get("post_id").and_then(|v| v.as_i64());
 
-    // Validate pod type and structure
-    log::info!("Validating signed pod structure");
-    validate_signed_pod_json(&payload.signed_pod)?;
-    log::info!("Pod validation successful");
+    log::debug!("Post ID: {:?}", post_id);
 
-    // Convert the json back into a POD
-    let signed_pod: SignedPod =
-        serde_json::from_value(payload.signed_pod.clone()).map_err(|e| {
-            log::error!("Failed to deserialize signed pod for verification: {e}");
-            StatusCode::BAD_REQUEST
-        })?;
+    // Validate pod structure and signature
+    log::info!("Validating signed pod structure and signature");
+    let signed_pod = &payload.signed_pod;
     validate_signed_pod(&signed_pod)?;
 
-    let signer = signed_pod
-        .get(KEY_SIGNER)
-        .map(|v| v.typed())
-        .ok_or(StatusCode::BAD_REQUEST)?;
-    let public_key = if let TypedValue::PublicKey(key) = signer {
-        Ok(key)
-    } else {
-        Err(StatusCode::BAD_REQUEST)
-    }?;
-
-    // We will store the public key inside the database in JSON
-    let public_key_json = serde_json::to_string(&public_key).map_err(|e| {
-        log::error!("Failed to serialize public key: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
+    // Verify identity pod
+    log::info!("Validating identity pod");
+    payload.identity_pod.verify().map_err(|e| {
+        log::error!("Failed to verify identity pod: {e}");
+        StatusCode::BAD_REQUEST
     })?;
 
-    // Verify the user is registered and the public key matches
-    log::info!("Verifying user registration");
-    let user = state
+    // Extract user info from identity pod
+    let username = payload
+        .identity_pod
+        .get("username")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            log::error!("Identity pod missing username");
+            StatusCode::BAD_REQUEST
+        })?;
+
+    let user_public_key = payload.identity_pod.get("user_public_key").ok_or_else(|| {
+        log::error!("Identity pod missing user_public_key");
+        StatusCode::BAD_REQUEST
+    })?;
+
+    let identity_server_id = payload
+        .identity_pod
+        .get("identity_server_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            log::error!("Identity pod missing identity_server_id");
+            StatusCode::BAD_REQUEST
+        })?;
+
+    // Verify the identity server is registered
+    let identity_server = state
         .db
-        .get_user_by_public_key(&public_key_json)
+        .get_identity_server_by_id(identity_server_id)
         .map_err(|e| {
-            log::error!("Database error checking user registration: {e}");
+            log::error!("Database error checking identity server: {e}");
             StatusCode::INTERNAL_SERVER_ERROR
         })?
         .ok_or_else(|| {
-            log::error!("User with public key {public_key} not registered");
+            log::error!("Identity server {} not registered", identity_server_id);
             StatusCode::UNAUTHORIZED
         })?;
-    log::info!("User {} verified for publishing", user.user_id);
+
+    // Verify identity pod was signed by the registered identity server
+    let identity_pod_signer = payload.identity_pod.get("_signer").ok_or_else(|| {
+        log::error!("Identity pod missing signer");
+        StatusCode::BAD_REQUEST
+    })?;
+
+    // Convert both signers to JSON for comparison
+    let identity_pod_signer_json = serde_json::to_value(identity_pod_signer).map_err(|e| {
+        log::error!("Failed to serialize identity pod signer: {e}");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    let expected_identity_signer: serde_json::Value =
+        serde_json::from_str(&identity_server.public_key).map_err(|e| {
+            log::error!("Failed to parse identity server public key: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    println!(
+        "SIGNER: {}, expected: {}",
+        identity_pod_signer, expected_identity_signer
+    );
+    if identity_pod_signer_json != expected_identity_signer {
+        log::error!("Identity pod signer doesn't match registered identity server");
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    // Verify document pod was signed by the user specified in identity pod
+    let document_pod_signer = signed_pod.get("_signer").ok_or_else(|| {
+        log::error!("Document pod missing signer");
+        StatusCode::BAD_REQUEST
+    })?;
+
+    // Convert both values to JSON for comparison
+    let document_pod_signer_json = serde_json::to_value(document_pod_signer).map_err(|e| {
+        log::error!("Failed to serialize document pod signer: {e}");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    let user_public_key_json = serde_json::to_value(user_public_key).map_err(|e| {
+        log::error!("Failed to serialize user public key: {e}");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    if document_pod_signer_json != user_public_key_json {
+        log::error!("Document pod signer doesn't match identity pod user_public_key");
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    log::info!(
+        "User {} verified for publishing via identity server {}",
+        username,
+        identity_server_id
+    );
+
+    // Create or ensure user exists in the database
+    log::info!("Checking if user {} exists in database", username);
+    if state.db.get_user_by_id(username).map_err(|e| {
+        log::error!("Database error checking user: {e}");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?.is_none() {
+        log::info!("Creating new user record for {}", username);
+        let user_public_key_json = serde_json::to_string(user_public_key).map_err(|e| {
+            log::error!("Failed to serialize user public key: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+        
+        state.db.create_user(username, &user_public_key_json).map_err(|e| {
+            log::error!("Failed to create user {}: {e}", username);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+        log::info!("User {} created successfully", username);
+    } else {
+        log::info!("User {} already exists", username);
+    }
 
     // Store the content and get its hash
     log::info!("Storing content in content-addressed storage");
@@ -364,7 +449,7 @@ pub async fn publish_document(
 
     // Determine post_id: either create new post or use existing
     log::info!("Determining post ID");
-    let post_id = match payload.post_id {
+    let post_id = match post_id {
         Some(id) => {
             log::info!("Using existing post ID: {id}");
             // Verify the post exists
@@ -397,7 +482,7 @@ pub async fn publish_document(
     log::info!("Creating document for post {post_id}");
     let document_id = state
         .db
-        .create_document(&content_hash, post_id, &pod_json, &user.user_id)
+        .create_document(&content_hash, post_id, &pod_json, username)
         .map_err(|e| {
             log::error!("Failed to create document: {e}");
             StatusCode::INTERNAL_SERVER_ERROR
@@ -497,6 +582,74 @@ pub async fn register_user(
         })?;
 
     log::info!("User {} registered successfully", payload.user_id);
+
+    // Return server info
+    let server_pk = crate::pod::get_server_public_key();
+    Ok(Json(ServerInfo {
+        public_key: server_pk,
+    }))
+}
+
+pub async fn register_identity_server(
+    State(state): State<Arc<crate::AppState>>,
+    Json(payload): Json<IdentityServerRegistration>,
+) -> Result<Json<ServerInfo>, StatusCode> {
+    // Verify the challenge response pod
+    payload.challenge_response.verify().map_err(|e| {
+        log::error!("Failed to verify identity server challenge response: {e}");
+        StatusCode::BAD_REQUEST
+    })?;
+
+    // Extract data from the signed pod
+    let signer = payload.challenge_response.get("_signer").ok_or_else(|| {
+        log::error!("Challenge response pod missing signer");
+        StatusCode::BAD_REQUEST
+    })?;
+
+    let server_id = payload
+        .challenge_response
+        .get("server_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            log::error!("Challenge response pod missing server_id");
+            StatusCode::BAD_REQUEST
+        })?;
+
+    // TODO: Verify the challenge was actually sent by this server
+    payload.challenge_response.get("challenge").ok_or_else(|| {
+        log::error!("Challenge response pod missing challenge");
+        StatusCode::BAD_REQUEST
+    })?;
+
+    log::info!("Registering identity server: {}", server_id);
+
+    // Check if identity server already exists
+    if let Ok(Some(_)) = state.db.get_identity_server_by_id(server_id) {
+        log::warn!("Identity server {} already exists", server_id);
+        return Err(StatusCode::CONFLICT);
+    }
+
+    let pk_string = serde_json::to_string(&signer).map_err(|e| {
+        log::error!("Unable to serialize identity server public key: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    let registration_pod_string =
+        serde_json::to_string(&payload.challenge_response).map_err(|e| {
+            log::error!("Unable to serialize registration pod: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    // Create identity server
+    state
+        .db
+        .create_identity_server(server_id, &pk_string, &registration_pod_string)
+        .map_err(|e| {
+            log::error!("Failed to create identity server {}: {}", server_id, e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    log::info!("Identity server {} registered successfully", server_id);
 
     // Return server info
     let server_pk = crate::pod::get_server_public_key();
