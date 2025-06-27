@@ -1,8 +1,13 @@
-use std::fs::File;
-use std::io::prelude::*;
+mod commands;
+mod utils;
+mod verification;
 
 use clap::{Arg, Command};
+use commands::{keygen, registry};
 use pod2::backends::plonky2::primitives::ec::schnorr::SecretKey;
+use std::fs::File;
+use utils::*;
+use verification::*;
 
 // Helper functions for creating common arguments
 fn server_arg() -> Arg {
@@ -57,41 +62,6 @@ fn content_args() -> Vec<Arg> {
             .long("file")
             .conflicts_with("content"),
     ]
-}
-
-// Helper functions for common response handling
-fn extract_document_metadata(document: &serde_json::Value) -> (String, String, i64, i64) {
-    let content_id = document
-        .get("content_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("N/A")
-        .to_string();
-    let created_at = document
-        .get("created_at")
-        .and_then(|v| v.as_str())
-        .unwrap_or("N/A")
-        .to_string();
-    let post_id = document
-        .get("post_id")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0);
-    let revision = document
-        .get("revision")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0);
-    (content_id, created_at, post_id, revision)
-}
-
-fn print_document_metadata(content_id: &str, created_at: &str, post_id: i64, revision: i64) {
-    println!("Document ID: {content_id}");
-    println!("Post ID: {post_id}");
-    println!("Revision: {revision}");
-    println!("Created: {created_at}");
-}
-
-fn handle_error_response(status: reqwest::StatusCode, error_text: &str, operation: &str) {
-    println!("Failed to {operation}. Status: {status}");
-    println!("Error: {error_text}");
 }
 
 fn create_enhanced_html_document(
@@ -217,23 +187,47 @@ fn create_enhanced_html_document(
     )
 }
 
-fn create_html_document(id: &str, content_id: &str, timestamp: &str, html_content: &str) -> String {
+fn create_enhanced_html_document_with_author(
+    id: &str,
+    content_id: &str,
+    timestamp: &str,
+    author: &str,
+    html_content: &str,
+    revision_links: &str,
+) -> String {
     format!(
         r#"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ParcNet Content - ID {id}</title>
+    <title>ParcNet Content - Post {id}</title>
     <style>
         body {{
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
             line-height: 1.6;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
+            margin: 0;
+            padding: 0;
             color: #333;
             background-color: #fff;
+            display: flex;
+            min-height: 100vh;
+        }}
+        .sidebar {{
+            width: 250px;
+            background-color: #f8f9fa;
+            border-right: 2px solid #eee;
+            padding: 20px;
+            position: fixed;
+            height: 100vh;
+            overflow-y: auto;
+            box-sizing: border-box;
+        }}
+        .main-content {{
+            flex: 1;
+            margin-left: 250px;
+            padding: 20px;
+            max-width: 800px;
         }}
         .header {{
             border-bottom: 2px solid #eee;
@@ -250,6 +244,45 @@ fn create_html_document(id: &str, content_id: &str, timestamp: &str, html_conten
         }}
         .metadata strong {{
             color: #333;
+        }}
+        .sidebar h3 {{
+            margin-top: 0;
+            color: #1976d2;
+            border-bottom: 2px solid #2196f3;
+            padding-bottom: 10px;
+        }}
+        .revision-item {{
+            margin-bottom: 10px;
+            padding: 10px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }}
+        .revision-item:hover {{
+            background-color: #e3f2fd;
+        }}
+        .revision-item.current {{
+            background-color: #e8f5e8;
+            border-left: 4px solid #28a745;
+        }}
+        .revision-link {{
+            color: #1976d2;
+            text-decoration: none;
+            display: block;
+            font-weight: 500;
+        }}
+        .revision-link:hover {{
+            text-decoration: underline;
+        }}
+        .revision-date {{
+            font-size: 0.8em;
+            color: #666;
+            margin-top: 5px;
+        }}
+        .loading {{
+            text-align: center;
+            padding: 20px;
+            color: #666;
         }}
         pre {{
             background-color: #f8f9fa;
@@ -294,21 +327,69 @@ fn create_html_document(id: &str, content_id: &str, timestamp: &str, html_conten
             text-decoration: underline;
         }}
     </style>
+    <script>
+        function showRevision(docId) {{
+            // Hide all document content divs
+            document.querySelectorAll('.document-content').forEach(div => {{
+                div.style.display = 'none';
+            }});
+            
+            // Show the selected document
+            const selectedDoc = document.getElementById(`document-${{docId}}`);
+            if (selectedDoc) {{
+                selectedDoc.style.display = 'block';
+                
+                // Update metadata with the selected document's info
+                const metadata = document.querySelector('.metadata');
+                const contentId = selectedDoc.getAttribute('data-content-id') || 'N/A';
+                const timestamp = selectedDoc.getAttribute('data-created') || 'N/A';
+                const author = selectedDoc.getAttribute('data-author') || 'Unknown';
+                const revision = selectedDoc.getAttribute('data-revision') || 'N/A';
+                
+                metadata.innerHTML = `
+                    <div><strong>Post ID:</strong> {id}</div>
+                    <div><strong>Author:</strong> ${{author}}</div>
+                    <div><strong>Content Hash:</strong> <code>${{contentId}}</code></div>
+                    <div><strong>Timestamp:</strong> ${{timestamp}}</div>
+                    <div><strong>Revision:</strong> ${{revision}}</div>
+                `;
+                
+                // Update current revision highlight in sidebar
+                document.querySelectorAll('.revision-item').forEach(item => {{
+                    item.classList.remove('current');
+                }});
+                document.querySelector(`[data-doc-id="${{docId}}"]`).classList.add('current');
+            }}
+        }}
+    </script>
 </head>
 <body>
-    <div class="header">
-        <h1>ParcNet Content</h1>
-        <div class="metadata">
-            <div><strong>ID:</strong> {id}</div>
-            <div><strong>Content Hash:</strong> <code>{content_id}</code></div>
-            <div><strong>Timestamp:</strong> {timestamp}</div>
+    <div class="sidebar">
+        <h3>Revisions</h3>
+        {revision_links}
+    </div>
+    <div class="main-content">
+        <div class="header">
+            <h1>ParcNet Content</h1>
+            <div class="metadata">
+                <div><strong>Post ID:</strong> {id}</div>
+                <div><strong>Author:</strong> {author}</div>
+                <div><strong>Content Hash:</strong> <code>{content_id}</code></div>
+                <div><strong>Timestamp:</strong> {timestamp}</div>
+            </div>
+        </div>
+        <div id="main-content" class="content">
+            {html_content}
         </div>
     </div>
-    <div class="content">
-        {html_content}
-    </div>
 </body>
-</html>"#
+</html>"#,
+        id = id,
+        author = author,
+        content_id = content_id,
+        timestamp = timestamp,
+        revision_links = revision_links,
+        html_content = html_content
     )
 }
 
@@ -388,7 +469,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(("keygen", sub_matches)) => {
             let output_file = sub_matches.get_one::<String>("output").unwrap();
             let name = sub_matches.get_one::<String>("name").unwrap();
-            generate_keypair(name, output_file)?;
+            keygen::generate_keypair(name, output_file)?;
         }
         Some(("publish", sub_matches)) => {
             let keypair_file = sub_matches.get_one::<String>("keypair").unwrap();
@@ -429,38 +510,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let keypair_file = sub_matches.get_one::<String>("keypair").unwrap();
             let server = sub_matches.get_one::<String>("server").unwrap();
             let user_id = sub_matches.get_one::<String>("user_id").unwrap();
-            register_user(keypair_file, server, user_id).await?;
+            registry::register_user(keypair_file, server, user_id).await?;
         }
         _ => {
             println!("No valid subcommand provided. Use --help for usage information.");
         }
     }
-
-    Ok(())
-}
-
-fn generate_keypair(name: &str, output_file: &str) -> Result<(), Box<dyn std::error::Error>> {
-    // Generate a new Schnorr keypair
-    let secret_key = SecretKey::new_rand();
-    let public_key = secret_key.public_key();
-
-    // Create a JSON structure with both keys and metadata
-    let keypair_data = serde_json::json!({
-        "name": name,
-        "secret_key": hex::encode(secret_key.0.to_bytes_le()),
-        "public_key": public_key,
-        "created_at": chrono::Utc::now().to_rfc3339(),
-        "key_type": "schnorr"
-    });
-
-    // Write to file
-    let mut file = File::create(output_file)?;
-    file.write_all(serde_json::to_string_pretty(&keypair_data)?.as_bytes())?;
-
-    println!("Generated keypair:");
-    println!("Name: {name}");
-    println!("Public Key: {public_key}");
-    println!("Saved to: {output_file}");
 
     Ok(())
 }
@@ -719,126 +774,179 @@ async fn view_post_in_browser(
 
     let post: serde_json::Value = response.json().await?;
 
-    // Find the latest document (documents are ordered by revision DESC)
-    if let Some(documents) = post.get("documents").and_then(|d| d.as_array()) {
-        if documents.is_empty() {
-            println!("No documents found for post ID: {post_id}");
-            return Ok(());
-        }
+    // Find all documents (documents are ordered by revision DESC)
+    let documents = post
+        .get("documents")
+        .and_then(|d| d.as_array())
+        .ok_or("Post missing documents field")?;
 
-        // Get the first document (latest revision)
-        let latest_document = &documents[0];
-        let document_id = latest_document
-            .get("id")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(0);
+    if documents.is_empty() {
+        println!("No documents found for post ID: {post_id}");
+        return Ok(());
+    }
 
-        // Now get the rendered version of this document
+    // Fetch rendered content for ALL documents
+    println!("Fetching all document revisions...");
+    let mut document_data = Vec::new();
+
+    for doc in documents.iter() {
+        let doc_id = doc.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
+        let doc_revision = doc.get("revision").and_then(|v| v.as_i64()).unwrap_or(0);
+
+        println!("Fetching revision {doc_revision}...");
+
+        // Get rendered version of this document
         let render_response = client
-            .get(format!("{server_url}/documents/{document_id}/render"))
+            .get(format!("{server_url}/documents/{doc_id}/render"))
             .send()
             .await?;
 
         if !render_response.status().is_success() {
             let status = render_response.status();
             let error_text = render_response.text().await?;
-            handle_error_response(status, &error_text, "retrieve rendered document");
-            return Ok(());
+            handle_error_response(
+                status,
+                &error_text,
+                &format!("retrieve rendered document {doc_id}"),
+            );
+            continue; // Skip this document but continue with others
         }
 
         let rendered_document: serde_json::Value = render_response.json().await?;
 
-        if let Some(html_content) = rendered_document.get("content").and_then(|v| v.as_str()) {
-            let (content_id, created_at, _, revision) =
-                extract_document_metadata(&rendered_document);
+        let html_content = rendered_document
+            .get("content")
+            .and_then(|v| v.as_str())
+            .ok_or("Rendered document missing content field")?;
+        let (content_id, created_at, _, revision) = extract_document_metadata(&rendered_document);
 
-            // Verify signatures
-            println!("Verifying signatures...");
+        // Verify signatures (required)
+        println!("Verifying signatures for revision {revision}...");
 
-            // Verify document pod signature
-            if let Some(pod) = rendered_document.get("pod") {
-                if let Err(e) = verify_document_pod_signature(pod, None) {
-                    println!("⚠ Document signature verification failed: {e}");
-                }
-            }
+        // Verify document pod signature (required)
+        let pod = rendered_document
+            .get("pod")
+            .ok_or("Document missing required pod field")?;
+        verify_document_pod_signature(pod, None)?;
 
-            // Verify timestamp pod signature if present
-            if let Some(timestamp_pod) = rendered_document.get("timestamp_pod") {
-                if let Err(e) = verify_timestamp_pod_signature(timestamp_pod, &server_public_key) {
-                    println!("⚠ Timestamp signature verification failed: {e}");
-                }
-            }
+        // Verify timestamp pod signature (required)
+        let timestamp_pod = rendered_document
+            .get("timestamp_pod")
+            .ok_or("Document missing required timestamp_pod field")?;
+        verify_timestamp_pod_signature(timestamp_pod, &server_public_key)?;
 
-            // Create revision navigation
-            let mut revision_links = String::new();
-            if documents.len() > 1 {
-                revision_links
-                    .push_str("<div class=\"revisions\">\n<h3>Other Revisions:</h3>\n<ul>\n");
-                for doc in documents.iter() {
-                    let doc_id = doc.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
-                    let doc_revision = doc.get("revision").and_then(|v| v.as_i64()).unwrap_or(0);
-                    let doc_created = doc
-                        .get("created_at")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("N/A");
+        // Get username
+        let username = rendered_document
+            .get("user_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown");
 
-                    if doc_revision != revision {
-                        revision_links.push_str(&format!(
-                            "<li><a href=\"#{doc_id}\">Revision {doc_revision} ({doc_created})</a></li>\n"
-                        ));
-                    } else {
-                        revision_links.push_str(&format!(
-                            "<li><strong>Revision {doc_revision} ({doc_created})</strong> ← Current</li>\n"
-                        ));
-                    }
-                }
-                revision_links.push_str("</ul></div>\n");
-            }
+        document_data.push((
+            doc_id,
+            revision,
+            content_id,
+            created_at,
+            username.to_string(),
+            html_content.to_string(),
+        ));
+    }
 
-            let full_html = create_enhanced_html_document(
-                post_id,
-                &content_id,
-                &created_at,
-                html_content,
-                &revision_links,
-            );
+    if document_data.is_empty() {
+        return Err("No valid documents could be fetched".into());
+    }
 
-            // Write to a temporary file
-            let temp_file = format!("/tmp/parcnet-post-{post_id}.html");
-            std::fs::write(&temp_file, full_html)?;
+    // Sort by revision DESC to get latest first
+    document_data.sort_by(|a, b| b.1.cmp(&a.1));
+    let latest_doc = &document_data[0];
 
-            println!(
-                "Opening latest document from post {post_id} in browser..."
-            );
-            println!("Document ID: {content_id}");
-            println!("Revision: {revision}");
-            println!("Created: {created_at}");
+    // Create revision navigation for sidebar and embedded document data
+    let mut revision_links = String::new();
+    let mut embedded_documents = String::new();
 
-            // Open in default browser
-            if let Err(e) = webbrowser::open(&temp_file) {
-                println!("Failed to open browser: {e}");
-                println!("HTML file saved to: {temp_file}");
-            } else {
-                println!("Opened in browser: {temp_file}");
-            }
-        } else {
-            println!(
-                "No content found in latest document for post ID: {post_id}"
-            );
+    if document_data.len() > 1 {
+        for (i, (doc_id, doc_revision, content_id, doc_created, username, html_content)) in
+            document_data.iter().enumerate()
+        {
+            let is_current = i == 0; // First item is the latest
+            let current_class = if is_current { " current" } else { "" };
+            let display_style = if is_current { "block" } else { "none" };
+
+            revision_links.push_str(&format!(
+                r#"<div class="revision-item{current_class}" data-doc-id="{doc_id}" onclick="showRevision({doc_id})">
+                    <div class="revision-link">Revision {doc_revision}</div>
+                    <div class="revision-date">{doc_created}</div>
+                    {current_indicator}
+                </div>"#,
+                current_class = current_class,
+                doc_id = doc_id,
+                doc_revision = doc_revision,
+                doc_created = doc_created,
+                current_indicator = if is_current { "<div style=\"font-size: 0.8em; color: #28a745; font-weight: bold;\">← Current</div>" } else { "" }
+            ));
+
+            // Add hidden div with document content
+            embedded_documents.push_str(&format!(
+                r#"<div id="document-{doc_id}" class="document-content" style="display: {display_style};" data-content-id="{content_id}" data-created="{doc_created}" data-author="{username}" data-revision="{doc_revision}">
+                    {html_content}
+                </div>"#,
+                doc_id = doc_id,
+                display_style = display_style,
+                content_id = content_id,
+                doc_created = doc_created,
+                username = username,
+                doc_revision = doc_revision,
+                html_content = html_content
+            ));
         }
     } else {
-        println!("No documents found for post ID: {post_id}");
+        let (doc_id, doc_revision, content_id, doc_created, username, html_content) =
+            &document_data[0];
+        revision_links.push_str("<div style=\"padding: 10px; color: #666; font-style: italic;\">This post has only one revision.</div>");
+
+        embedded_documents.push_str(&format!(
+            r#"<div id="document-{doc_id}" class="document-content" style="display: block;" data-content-id="{content_id}" data-created="{doc_created}" data-author="{username}" data-revision="{doc_revision}">
+                {html_content}
+            </div>"#,
+            doc_id = doc_id,
+            content_id = content_id,
+            doc_created = doc_created,
+            username = username,
+            doc_revision = doc_revision,
+            html_content = html_content
+        ));
+    }
+
+    let full_html = create_enhanced_html_document_with_author(
+        post_id,
+        &latest_doc.2,       // content_id
+        &latest_doc.3,       // created_at
+        &latest_doc.4,       // username
+        &embedded_documents, // all documents embedded
+        &revision_links,
+    );
+
+    // Write to a temporary file
+    let temp_file = format!("/tmp/parcnet-post-{post_id}.html");
+    std::fs::write(&temp_file, full_html)?;
+
+    println!(
+        "Opening post {post_id} with {} revisions in browser...",
+        document_data.len()
+    );
+    println!("Latest author: {}", latest_doc.4);
+    println!("Latest document ID: {}", latest_doc.2);
+    println!("Latest revision: {}", latest_doc.1);
+    println!("Latest created: {}", latest_doc.3);
+
+    // Open in default browser
+    if let Err(e) = webbrowser::open(&temp_file) {
+        println!("Failed to open browser: {e}");
+        println!("HTML file saved to: {temp_file}");
+    } else {
+        println!("Opened in browser: {temp_file}");
     }
 
     Ok(())
-}
-
-fn truncate_string(s: &str, max_len: usize) -> String {
-    if s.len() > max_len {
-        format!("{}...", &s[0..max_len - 3])
-    } else {
-        s.to_string()
-    }
 }
 
 fn print_post_row(post: &serde_json::Value) {
@@ -862,9 +970,7 @@ fn print_post_row(post: &serde_json::Value) {
         .map(|id| id.to_string())
         .unwrap_or_else(|| "N/A".to_string());
 
-    println!(
-        "{id:<5} {created_at:<20} {last_edited_at:<20} {latest_doc_id:<10}"
-    );
+    println!("{id:<5} {created_at:<20} {last_edited_at:<20} {latest_doc_id:<10}");
 }
 
 fn print_document_row(document: &serde_json::Value) {
@@ -939,10 +1045,7 @@ async fn list_posts(server_url: &str) -> Result<(), Box<dyn std::error::Error>> 
 
 async fn list_documents(server_url: &str) -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
-    let response = client
-        .get(format!("{server_url}/documents"))
-        .send()
-        .await?;
+    let response = client.get(format!("{server_url}/documents")).send().await?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -979,126 +1082,4 @@ async fn list_documents(server_url: &str) -> Result<(), Box<dyn std::error::Erro
         "\nUse 'get-document --document-id <ID>' to retrieve document or 'view --post-id <POST_ID>' to open latest document in browser."
     );
     Ok(())
-}
-
-async fn register_user(
-    keypair_file: &str,
-    server_url: &str,
-    user_id: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    println!("Registering user {user_id} with server...");
-
-    // Load keypair from file
-    let file = File::open(keypair_file)?;
-    let keypair_data: serde_json::Value = serde_json::from_reader(file)?;
-
-    let public_key = keypair_data["public_key"]
-        .as_str()
-        .ok_or("Invalid keypair file: missing public_key")?;
-
-    let payload = serde_json::json!({
-        "user_id": user_id,
-        "public_key": public_key
-    });
-
-    let client = reqwest::Client::new();
-    let response = client
-        .post(format!("{server_url}/register"))
-        .header("Content-Type", "application/json")
-        .json(&payload)
-        .send()
-        .await?;
-
-    if response.status().is_success() {
-        let result: serde_json::Value = response.json().await?;
-        println!("Successfully registered user: {user_id}");
-        println!("Public Key: {public_key}");
-
-        if let Some(server_pk) = result.get("public_key").and_then(|v| v.as_str()) {
-            println!("Server Public Key: {server_pk}");
-        }
-    } else {
-        let status = response.status();
-        let error_text = response.text().await?;
-        handle_error_response(status, &error_text, "register user");
-    }
-
-    Ok(())
-}
-
-fn verify_timestamp_pod_signature(
-    timestamp_pod: &serde_json::Value,
-    server_public_key: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use pod2::frontend::SignedPod;
-
-    // Deserialize timestamp pod
-    let signed_pod: SignedPod = serde_json::from_value(timestamp_pod.clone())?;
-
-    // Verify signature
-    signed_pod.verify()?;
-
-    // Check that the signer matches the server public key
-    let pod_signer = signed_pod
-        .get("_signer")
-        .ok_or("Timestamp pod missing signer")?;
-
-    let pod_signer_str = format!("{pod_signer}");
-    let server_public_key = format!("pk:{server_public_key}");
-    if pod_signer_str != server_public_key {
-        return Err(format!(
-            "Timestamp pod signer {pod_signer_str} does not match server public key {server_public_key}"
-        )
-        .into());
-    }
-
-    println!("✓ Timestamp pod signature verified");
-    Ok(())
-}
-
-fn verify_document_pod_signature(
-    document_pod: &serde_json::Value,
-    expected_signer: Option<&str>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use pod2::frontend::SignedPod;
-
-    // Deserialize document pod
-    let signed_pod: SignedPod = serde_json::from_value(document_pod.clone())?;
-
-    // Verify signature
-    signed_pod.verify()?;
-
-    // If expected signer provided, check it matches
-    if let Some(expected) = expected_signer {
-        let pod_signer = signed_pod
-            .get("_signer")
-            .ok_or("Document pod missing signer")?;
-
-        let pod_signer_str = format!("{pod_signer}");
-        if pod_signer_str != expected {
-            return Err(format!(
-                "Document pod signer {pod_signer_str} does not match expected {expected}"
-            )
-            .into());
-        }
-    }
-
-    println!("✓ Document pod signature verified");
-    Ok(())
-}
-
-async fn get_server_public_key(server_url: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let client = reqwest::Client::new();
-    let response = client.get(server_url).send().await?;
-
-    if response.status().is_success() {
-        let server_info: serde_json::Value = response.json().await?;
-        let public_key = server_info
-            .get("public_key")
-            .and_then(|v| v.as_str())
-            .ok_or("Server response missing public_key")?;
-        Ok(public_key.to_string())
-    } else {
-        Err("Failed to get server info".into())
-    }
 }
