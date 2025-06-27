@@ -3,7 +3,7 @@ mod utils;
 mod verification;
 
 use clap::{Arg, Command};
-use commands::{keygen, registry};
+use commands::{keygen, registry, identity};
 use pod2::backends::plonky2::primitives::ec::schnorr::SecretKey;
 use std::fs::File;
 use utils::*;
@@ -417,7 +417,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .subcommand(
             Command::new("publish")
                 .about("Sign content and submit to server (creates new post or adds revision)")
-                .args([keypair_arg(), server_arg(), optional_post_id_arg()])
+                .args([
+                    keypair_arg(), 
+                    server_arg(), 
+                    optional_post_id_arg(),
+                    Arg::new("identity_pod")
+                        .help("Path to identity pod file")
+                        .short('i')
+                        .long("identity-pod")
+                        .required(true),
+                ])
                 .args(content_args()),
         )
         .subcommand(
@@ -451,16 +460,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .arg(server_arg()),
         )
         .subcommand(
-            Command::new("register")
-                .about("Register user with server using keypair")
+            Command::new("get-identity")
+                .about("Get identity pod from identity server")
                 .args([
                     keypair_arg(),
-                    server_arg(),
-                    Arg::new("user_id")
-                        .help("User ID to register")
+                    Arg::new("identity_server")
+                        .help("Identity server URL")
+                        .short('i')
+                        .long("identity-server")
+                        .default_value("http://localhost:3001"),
+                    Arg::new("username")
+                        .help("Username to register")
                         .short('u')
-                        .long("user-id")
+                        .long("username")
                         .required(true),
+                    Arg::new("output")
+                        .help("Output file for identity pod")
+                        .short('o')
+                        .long("output")
+                        .default_value("identity.pod"),
                 ]),
         )
         .get_matches();
@@ -476,7 +494,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let content = get_content_from_args(sub_matches)?;
             let server = sub_matches.get_one::<String>("server").unwrap();
             let post_id = sub_matches.get_one::<String>("post_id");
-            publish_content(keypair_file, &content, server, post_id).await?;
+            let identity_pod_file = sub_matches.get_one::<String>("identity_pod").unwrap();
+            publish_content(keypair_file, &content, server, post_id, identity_pod_file).await?;
         }
         Some(("get-post", sub_matches)) => {
             let post_id = sub_matches.get_one::<String>("post_id").unwrap();
@@ -506,11 +525,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let server = sub_matches.get_one::<String>("server").unwrap();
             list_documents(server).await?;
         }
-        Some(("register", sub_matches)) => {
+        Some(("get-identity", sub_matches)) => {
             let keypair_file = sub_matches.get_one::<String>("keypair").unwrap();
-            let server = sub_matches.get_one::<String>("server").unwrap();
-            let user_id = sub_matches.get_one::<String>("user_id").unwrap();
-            registry::register_user(keypair_file, server, user_id).await?;
+            let identity_server = sub_matches.get_one::<String>("identity_server").unwrap();
+            let username = sub_matches.get_one::<String>("username").unwrap();
+            let output_file = sub_matches.get_one::<String>("output").unwrap();
+            identity::get_identity(keypair_file, identity_server, username, output_file).await?;
         }
         _ => {
             println!("No valid subcommand provided. Use --help for usage information.");
@@ -525,6 +545,7 @@ async fn publish_content(
     content: &str,
     server_url: &str,
     post_id: Option<&String>,
+    identity_pod_file: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use num_bigint::BigUint;
     use plonky2::field::goldilocks_field::GoldilocksField;
@@ -532,11 +553,20 @@ async fn publish_content(
     use plonky2::hash::poseidon::PoseidonHash;
     use plonky2::plonk::config::Hasher;
     use pod2::backends::plonky2::signedpod::Signer;
-    use pod2::frontend::SignedPodBuilder;
+    use pod2::frontend::{SignedPod, SignedPodBuilder};
     use pod2::middleware::Params;
 
     println!("Publishing content to server...");
     println!("Content: {content}");
+
+    // Load and verify identity pod
+    println!("Loading identity pod from: {identity_pod_file}");
+    let identity_pod_json = std::fs::read_to_string(identity_pod_file)?;
+    let identity_pod: SignedPod = serde_json::from_str(&identity_pod_json)?;
+    
+    // Verify the identity pod
+    identity_pod.verify()?;
+    println!("✓ Identity pod verification successful");
 
     // Calculate content hash (same as server)
     let bytes = content.as_bytes();
@@ -555,7 +585,6 @@ async fn publish_content(
         inputs.push(GoldilocksField::ZERO);
     }
 
-    // TODO(EVAN): no padding could lead to issues ...
     let hash_result = PoseidonHash::hash_no_pad(&inputs);
     // Convert full hash result to bytes (all 4 elements)
     let mut hash_bytes = Vec::new();
@@ -579,28 +608,33 @@ async fn publish_content(
     println!("Public key: {}", keypair_data["public_key"]);
     println!("Content hash: {content_hash}");
 
-    // Create signed pod with the content hash
+    // Create document pod with content hash, timestamp, and optional post_id
     let params = Params::default();
     let mut builder = SignedPodBuilder::new(&params);
+    
     builder.insert("content_hash", content_hash.as_str());
-
-    let signed_pod = builder.sign(&mut Signer(secret_key))?;
-
-    println!("Content hash signed successfully!");
-
-    // Submit content and pod to server using the /publish route
-    let mut payload = serde_json::json!({
-        "content": content,
-        "signed_pod": signed_pod,
-        "public_key": keypair_data["public_key"].as_str().unwrap_or("")
-    });
-
-    // Add post_id if provided (for adding revision to existing post)
+    builder.insert("timestamp", chrono::Utc::now().timestamp());
+    
+    // Add post_id to the pod if provided (for adding revision to existing post)
     if let Some(id) = post_id {
         if let Ok(post_id_num) = id.parse::<i64>() {
-            payload["post_id"] = serde_json::Value::Number(serde_json::Number::from(post_id_num));
+            builder.insert("post_id", post_id_num);
         }
     }
+
+    let signed_pod = builder.sign(&mut Signer(secret_key))?;
+    println!("✓ Document pod signed successfully");
+
+    // Verify the document pod
+    signed_pod.verify()?;
+    println!("✓ Document pod verification successful");
+
+    // Create the publish request with both document pod and identity pod
+    let payload = serde_json::json!({
+        "content": content,
+        "signed_pod": signed_pod,
+        "identity_pod": identity_pod
+    });
 
     let client = reqwest::Client::new();
     let response = client
@@ -612,7 +646,7 @@ async fn publish_content(
 
     if response.status().is_success() {
         let result: serde_json::Value = response.json().await?;
-        println!("Successfully published to server!");
+        println!("✓ Successfully published to server!");
         println!(
             "Server response: {}",
             serde_json::to_string_pretty(&result)?
@@ -620,8 +654,7 @@ async fn publish_content(
     } else {
         let status = response.status();
         let error_text = response.text().await?;
-        println!("Failed to publish. Status: {status}");
-        println!("Error: {error_text}");
+        handle_error_response(status, &error_text, "publish content");
     }
 
     Ok(())
