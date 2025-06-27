@@ -28,31 +28,3 @@ pub fn verify_timestamp_pod_signature(
     Ok(())
 }
 
-pub fn verify_document_pod_signature(
-    document_pod: &serde_json::Value,
-    expected_signer: Option<&str>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // Deserialize document pod
-    let signed_pod: SignedPod = serde_json::from_value(document_pod.clone())?;
-
-    // Verify signature
-    signed_pod.verify()?;
-
-    // If expected signer provided, check it matches
-    if let Some(expected) = expected_signer {
-        let pod_signer = signed_pod
-            .get("_signer")
-            .ok_or("Document pod missing signer")?;
-
-        let pod_signer_str = format!("{pod_signer}");
-        if pod_signer_str != expected {
-            return Err(format!(
-                "Document pod signer {pod_signer_str} does not match expected {expected}"
-            )
-            .into());
-        }
-    }
-
-    println!("✓ Document pod signature verified");
-    Ok(())
-}
