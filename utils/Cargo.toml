@@ -1,0 +1,8 @@
+[package]
+name = "pod-utils"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pod2 = { git = "https://github.com/0xPARC/pod2.git" }
+log = "0.4"
