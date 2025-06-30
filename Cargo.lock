@@ -1412,6 +1412,7 @@ source = "git+https://github.com/0xPolygonZero/plonky2#82791c4809d6275682c34b926
 name = "pod-utils"
 version = "0.1.0"
 dependencies = [
+ "log",
  "pod2",
 ]
 
