@@ -17,7 +17,7 @@ reqwest = { version = "0.11", features = ["json"] }
 tokio = { version = "1.0", features = ["full"] }
 webbrowser = "0.8"
 plonky2 = { git = "https://github.com/0xPolygonZero/plonky2.git" }
-pod-utils = { path = "../pod-utils" }
+pod-utils = { path = "../utils" }
 
 [profile.release-with-debug]
 inherits = "release"

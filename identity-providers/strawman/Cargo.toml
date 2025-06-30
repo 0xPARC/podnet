@@ -17,5 +17,5 @@ hex = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1.0"
 reqwest = { version = "0.11", features = ["json"] }
-pod-utils = { path = "../pod-utils" }
+pod-utils = { path = "../../utils" }
 num-bigint = "0.4"

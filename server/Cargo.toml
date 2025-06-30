@@ -21,7 +21,7 @@ pod2 = { git = "https://github.com/0xPARC/pod2.git" }
 num-bigint = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
 plonky2 = { git = "https://github.com/0xPolygonZero/plonky2.git" }
-pod-utils = { path = "../pod-utils" }
+pod-utils = { path = "../utils" }
 
 [profile.release-with-debug]
 inherits = "release"
