@@ -1,192 +1,17 @@
+mod cli;
 mod commands;
 mod utils;
 mod verification;
 
 use clap::{Arg, Command};
-use commands::{keygen, registry, identity};
+use commands::{keygen, identity, documents, posts, publish};
 use pod2::backends::plonky2::primitives::ec::schnorr::SecretKey;
 use pod2::frontend::MainPod;
 use std::fs::File;
+use cli::*;
 use utils::*;
 use verification::*;
 
-// Helper functions for creating common arguments
-fn server_arg() -> Arg {
-    Arg::new("server")
-        .help("Server URL")
-        .short('s')
-        .long("server")
-        .default_value("http://localhost:3000")
-}
-
-fn keypair_arg() -> Arg {
-    Arg::new("keypair")
-        .help("Path to keypair file")
-        .short('k')
-        .long("keypair")
-        .required(true)
-}
-
-fn post_id_arg() -> Arg {
-    Arg::new("post_id")
-        .help("Post ID")
-        .short('p')
-        .long("post-id")
-        .required(true)
-}
-
-fn document_id_arg() -> Arg {
-    Arg::new("document_id")
-        .help("Document ID")
-        .short('d')
-        .long("document-id")
-        .required(true)
-}
-
-fn optional_post_id_arg() -> Arg {
-    Arg::new("post_id")
-        .help("Post ID to add revision to (creates new post if not provided)")
-        .short('p')
-        .long("post-id")
-}
-
-fn content_args() -> Vec<Arg> {
-    vec![
-        Arg::new("content")
-            .help("Content to publish")
-            .short('c')
-            .long("content")
-            .conflicts_with("file"),
-        Arg::new("file")
-            .help("Markdown file to publish")
-            .short('f')
-            .long("file")
-            .conflicts_with("content"),
-    ]
-}
-
-fn create_enhanced_html_document(
-    id: &str,
-    content_id: &str,
-    timestamp: &str,
-    html_content: &str,
-    revision_links: &str,
-) -> String {
-    format!(
-        r#"<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ParcNet Content - Post {id}</title>
-    <style>
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
-            line-height: 1.6;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-            color: #333;
-            background-color: #fff;
-        }}
-        .header {{
-            border-bottom: 2px solid #eee;
-            padding-bottom: 20px;
-            margin-bottom: 30px;
-        }}
-        .metadata {{
-            background-color: #f8f9fa;
-            padding: 15px;
-            border-radius: 5px;
-            margin-bottom: 20px;
-            font-size: 0.9em;
-            color: #666;
-        }}
-        .metadata strong {{
-            color: #333;
-        }}
-        .revisions {{
-            background-color: #e3f2fd;
-            padding: 15px;
-            border-radius: 5px;
-            margin-bottom: 20px;
-            border-left: 4px solid #2196f3;
-        }}
-        .revisions h3 {{
-            margin-top: 0;
-            color: #1976d2;
-        }}
-        .revisions ul {{
-            margin-bottom: 0;
-        }}
-        .revisions a {{
-            color: #1976d2;
-            text-decoration: none;
-        }}
-        .revisions a:hover {{
-            text-decoration: underline;
-        }}
-        pre {{
-            background-color: #f8f9fa;
-            padding: 15px;
-            border-radius: 5px;
-            overflow-x: auto;
-            border-left: 4px solid #007bff;
-        }}
-        code {{
-            background-color: #f8f9fa;
-            padding: 2px 6px;
-            border-radius: 3px;
-            font-family: 'Monaco', 'Consolas', monospace;
-        }}
-        pre code {{
-            background-color: transparent;
-            padding: 0;
-        }}
-        h1, h2, h3, h4, h5, h6 {{
-            margin-top: 30px;
-            margin-bottom: 15px;
-        }}
-        h1 {{
-            color: #2c3e50;
-            border-bottom: 2px solid #eee;
-            padding-bottom: 10px;
-        }}
-        h2 {{
-            color: #34495e;
-        }}
-        ul, ol {{
-            padding-left: 30px;
-        }}
-        li {{
-            margin-bottom: 5px;
-        }}
-        a {{
-            color: #007bff;
-            text-decoration: none;
-        }}
-        a:hover {{
-            text-decoration: underline;
-        }}
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>ParcNet Content</h1>
-        <div class="metadata">
-            <div><strong>Post ID:</strong> {id}</div>
-            <div><strong>Content Hash:</strong> <code>{content_id}</code></div>
-            <div><strong>Timestamp:</strong> {timestamp}</div>
-        </div>
-    </div>
-    {revision_links}
-    <div class="content">
-        {html_content}
-    </div>
-</body>
-</html>"#
-    )
-}
 
 fn create_enhanced_html_document_with_author(
     id: &str,
@@ -202,7 +27,7 @@ fn create_enhanced_html_document_with_author(
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ParcNet Content - Post {id}</title>
+    <title>PodNet Content - Post {id}</title>
     <style>
         body {{
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
@@ -371,7 +196,7 @@ fn create_enhanced_html_document_with_author(
     </div>
     <div class="main-content">
         <div class="header">
-            <h1>ParcNet Content</h1>
+            <h1>PodNet Content</h1>
             <div class="metadata">
                 <div><strong>Post ID:</strong> {id}</div>
                 <div><strong>Author:</strong> {author}</div>
@@ -501,22 +326,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let post_id = sub_matches.get_one::<String>("post_id");
             let identity_pod_file = sub_matches.get_one::<String>("identity_pod").unwrap();
             let use_mock = sub_matches.get_flag("mock");
-            publish_content(keypair_file, &content, server, post_id, identity_pod_file, use_mock).await?;
+            publish::publish_content(keypair_file, &content, server, post_id, identity_pod_file, use_mock).await?;
         }
         Some(("get-post", sub_matches)) => {
             let post_id = sub_matches.get_one::<String>("post_id").unwrap();
             let server = sub_matches.get_one::<String>("server").unwrap();
-            get_post_by_id(post_id, server).await?;
+            posts::get_post_by_id(post_id, server).await?;
         }
         Some(("get-document", sub_matches)) => {
             let document_id = sub_matches.get_one::<String>("document_id").unwrap();
             let server = sub_matches.get_one::<String>("server").unwrap();
-            get_document_by_id(document_id, server).await?;
+            documents::get_document_by_id(document_id, server).await?;
         }
         Some(("render", sub_matches)) => {
             let document_id = sub_matches.get_one::<String>("document_id").unwrap();
             let server = sub_matches.get_one::<String>("server").unwrap();
-            render_document_by_id(document_id, server).await?;
+            documents::render_document_by_id(document_id, server).await?;
         }
         Some(("view", sub_matches)) => {
             let post_id = sub_matches.get_one::<String>("post_id").unwrap();
@@ -525,11 +350,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(("list-posts", sub_matches)) => {
             let server = sub_matches.get_one::<String>("server").unwrap();
-            list_posts(server).await?;
+            posts::list_posts(server).await?;
         }
         Some(("list-documents", sub_matches)) => {
             let server = sub_matches.get_one::<String>("server").unwrap();
-            list_documents(server).await?;
+            documents::list_documents(server).await?;
         }
         Some(("get-identity", sub_matches)) => {
             let keypair_file = sub_matches.get_one::<String>("keypair").unwrap();
@@ -546,6 +371,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+// This function is now in commands/publish.rs
 async fn publish_content(
     keypair_file: &str,
     content: &str,

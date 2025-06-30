@@ -42,6 +42,10 @@ pub fn truncate_string(s: &str, max_len: usize) -> String {
     }
 }
 
+pub fn truncate_pod_json(pod_json: &str) -> String {
+    truncate_string(pod_json, 50)
+}
+
 pub async fn get_server_public_key(server_url: &str) -> Result<String, Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
     let response = client.get(server_url).send().await?;
