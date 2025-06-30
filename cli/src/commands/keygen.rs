@@ -4,21 +4,19 @@ use std::io::prelude::*;
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct KeypairData {
-    pub name: String,
     pub secret_key: String,
     pub public_key: Point,
     pub created_at: String,
     pub key_type: String,
 }
 
-pub fn generate_keypair(name: &str, output_file: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn generate_keypair(output_file: &str) -> Result<(), Box<dyn std::error::Error>> {
     // Generate a new Schnorr keypair
     let secret_key = SecretKey::new_rand();
     let public_key = secret_key.public_key();
 
     // Create a JSON structure with both keys and metadata
     let keypair_data = KeypairData {
-        name: name.to_string(),
         secret_key: hex::encode(secret_key.0.to_bytes_le()),
         public_key,
         created_at: chrono::Utc::now().to_rfc3339(),
@@ -30,7 +28,6 @@ pub fn generate_keypair(name: &str, output_file: &str) -> Result<(), Box<dyn std
     file.write_all(serde_json::to_string_pretty(&keypair_data)?.as_bytes())?;
 
     println!("Generated keypair:");
-    println!("Name: {name}");
     println!("Public Key: {public_key}");
     println!("Saved to: {output_file}");
 

@@ -38,7 +38,7 @@ impl Database {
                 revision INTEGER NOT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 pod TEXT NOT NULL,
-                timestamp_pod TEXT,
+                timestamp_pod TEXT NOT NULL,
                 user_id TEXT NOT NULL,
                 FOREIGN KEY (post_id) REFERENCES posts (id),
                 UNIQUE (post_id, revision)
@@ -164,17 +164,59 @@ impl Database {
         Ok(conn.last_insert_rowid())
     }
 
-    pub fn update_document_timestamp_pod(
+    pub fn create_document_with_timestamp_pod<F>(
         &self,
-        document_id: i64,
-        timestamp_pod_json: &str,
-    ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "UPDATE documents SET timestamp_pod = ?1 WHERE id = ?2",
-            [timestamp_pod_json, &document_id.to_string()],
+        content_id: &str,
+        post_id: i64,
+        pod_json: &str,
+        user_id: &str,
+        timestamp_pod_creator: F,
+    ) -> Result<i64>
+    where
+        F: FnOnce(i64, i64) -> Result<String, Box<dyn std::error::Error + Send + Sync>>,
+    {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+
+        // Get the next revision number for this post
+        let next_revision: i64 = tx.query_row(
+            "SELECT COALESCE(MAX(revision), 0) + 1 FROM documents WHERE post_id = ?1",
+            [post_id],
+            |row| row.get(0),
         )?;
-        Ok(())
+
+        // Insert document with empty timestamp_pod initially
+        tx.execute(
+            "INSERT INTO documents (content_id, post_id, revision, pod, timestamp_pod, user_id) VALUES (?1, ?2, ?3, ?4, '', ?5)",
+            rusqlite::params![
+                content_id,
+                post_id,
+                next_revision,
+                pod_json,
+                user_id,
+            ],
+        )?;
+
+        let document_id = tx.last_insert_rowid();
+
+        // Create timestamp pod with document_id and post_id
+        let timestamp_pod_json = timestamp_pod_creator(post_id, document_id)
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e))?;
+
+        // Update document with timestamp pod
+        tx.execute(
+            "UPDATE documents SET timestamp_pod = ?1 WHERE id = ?2",
+            [&timestamp_pod_json, &document_id.to_string()],
+        )?;
+
+        // Update the post's last_edited_at timestamp
+        tx.execute(
+            "UPDATE posts SET last_edited_at = CURRENT_TIMESTAMP WHERE id = ?1",
+            [post_id],
+        )?;
+
+        tx.commit()?;
+        Ok(document_id)
     }
 
     pub fn get_document(&self, id: i64) -> Result<Option<Document>> {
@@ -361,7 +403,10 @@ impl Database {
         Ok(identity_server)
     }
 
-    pub fn get_identity_server_by_public_key(&self, public_key: &str) -> Result<Option<IdentityServer>> {
+    pub fn get_identity_server_by_public_key(
+        &self,
+        public_key: &str,
+    ) -> Result<Option<IdentityServer>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, server_id, public_key, registration_pod, created_at FROM identity_servers WHERE public_key = ?1",

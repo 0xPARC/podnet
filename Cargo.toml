@@ -1,0 +1,37 @@
+[workspace]
+members = [
+    "cli",
+    "server", 
+    "utils",
+    "identity-providers/strawman"
+]
+resolver = "2"
+
+# Only dependencies shared across multiple workspace members
+[workspace.dependencies]
+# Core project dependencies (used by all/most crates)
+pod2 = { git = "https://github.com/0xPARC/pod2.git" }
+plonky2 = { git = "https://github.com/0xPolygonZero/plonky2.git" }
+pod-utils = { path = "utils" }
+
+# Shared across multiple crates
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+hex = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
+num-bigint = "0.4"
+log = "0.4"
+reqwest = { version = "0.11", features = ["json"] }
+
+# Common workspace metadata
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+# Shared profile
+[profile.release-with-debug]
+inherits = "release"
+debug = true

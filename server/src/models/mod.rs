@@ -17,9 +17,9 @@ pub struct Document {
     pub post_id: i64,
     pub revision: i64,
     pub created_at: Option<String>,
-    pub pod: String,                   // JSON string of the signed pod
-    pub timestamp_pod: Option<String>, // JSON string of the server timestamp pod
-    pub user_id: String,               // Username of the author
+    pub pod: String,           // JSON string of the signed pod
+    pub timestamp_pod: String, // JSON string of the server timestamp pod
+    pub user_id: String,       // Username of the author
 }
 
 #[derive(Debug, Serialize)]
@@ -51,7 +51,7 @@ pub struct DocumentMetadata {
     pub revision: i64,
     pub created_at: Option<String>,
     pub pod: serde_json::Value,
-    pub timestamp_pod: Option<serde_json::Value>,
+    pub timestamp_pod: serde_json::Value,
     pub user_id: String, // Username of the author
 }
 

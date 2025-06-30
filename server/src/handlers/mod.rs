@@ -111,10 +111,7 @@ pub async fn get_posts(
             let pod_value: serde_json::Value = serde_json::from_str(&document.pod)
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-            let timestamp_pod_value = document
-                .timestamp_pod
-                .as_ref()
-                .and_then(|tp| serde_json::from_str(tp).ok());
+            let timestamp_pod_value = serde_json::from_str(&document.timestamp_pod).ok();
 
             documents_with_content.push(DocumentWithContent {
                 id: document.id,
@@ -152,10 +149,8 @@ pub async fn get_documents(
         let pod_value: serde_json::Value =
             serde_json::from_str(&document.pod).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-        let timestamp_pod_value = document
-            .timestamp_pod
-            .as_ref()
-            .and_then(|tp| serde_json::from_str(tp).ok());
+        let timestamp_pod_value = serde_json::from_str(&document.timestamp_pod)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
         documents_metadata.push(DocumentMetadata {
             id: document.id,
@@ -192,10 +187,8 @@ async fn get_post_with_documents_from_db(
         let pod_value: serde_json::Value =
             serde_json::from_str(&document.pod).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-        let timestamp_pod_value = document
-            .timestamp_pod
-            .as_ref()
-            .and_then(|tp| serde_json::from_str(tp).ok());
+        let timestamp_pod_value = serde_json::from_str(&document.timestamp_pod)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
         documents_with_content.push(DocumentWithContent {
             id: document.id,
@@ -232,10 +225,8 @@ async fn get_document_from_db(
     let pod_value: serde_json::Value =
         serde_json::from_str(&document.pod).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let timestamp_pod_value = document
-        .timestamp_pod
-        .as_ref()
-        .and_then(|tp| serde_json::from_str(tp).ok());
+    let timestamp_pod_value = serde_json::from_str(&document.timestamp_pod)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(DocumentWithContent {
         id: document.id,
@@ -471,26 +462,28 @@ pub async fn publish_document(
         }
     };
 
-    // Create timestamp pod for the main pod
-    log::info!("Creating timestamp pod for main pod");
-    let timestamp_pod = crate::pod::create_timestamp_pod_for_main_pod(&payload.main_pod)
-        .map_err(|e| {
-            log::error!("Failed to create timestamp pod: {e}");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-    
-    let timestamp_pod_json = serde_json::to_string(&timestamp_pod).map_err(|e| {
-        log::error!("Failed to serialize timestamp pod: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
-    // Create document (revision) for the post
+    // Create document with timestamp pod in a single transaction
     log::info!("Creating document for post {final_post_id}");
     let document_id = state
         .db
-        .create_document(&content_hash, final_post_id, &pod_json, &username, &timestamp_pod_json)
+        .create_document_with_timestamp_pod(
+            &content_hash,
+            final_post_id,
+            &pod_json,
+            &username,
+            |post_id, doc_id| {
+                log::info!("Creating timestamp pod for main pod (post_id: {post_id}, document_id: {doc_id})");
+                let timestamp_pod = crate::pod::create_timestamp_pod_for_main_pod(
+                    &payload.main_pod,
+                    post_id,
+                    doc_id,
+                )?;
+                serde_json::to_string(&timestamp_pod)
+                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send+Sync>)
+            },
+        )
         .map_err(|e| {
-            log::error!("Failed to create document: {e}");
+            log::error!("Failed to create document with timestamp pod: {e}");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     log::info!("Document created with ID: {document_id}");
@@ -522,7 +515,7 @@ pub async fn publish_document(
         created_at: document.created_at,
         pod: pod_value,
         content: Some(payload.content),
-        timestamp_pod: serde_json::from_str(&timestamp_pod_json).ok(),
+        timestamp_pod: serde_json::from_str(&document.timestamp_pod).ok(),
         user_id: document.user_id,
     }))
 }

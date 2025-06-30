@@ -1,22 +1,22 @@
 use axum::{
+    Router,
     extract::State,
     http::StatusCode,
     response::Json,
     routing::{get, post},
-    Router,
 };
+use pod_utils::ValueExt;
 use pod2::backends::plonky2::{
     primitives::ec::{curve::Point as PublicKey, schnorr::SecretKey},
     signedpod::Signer,
 };
 use pod2::frontend::{SignedPod, SignedPodBuilder};
 use pod2::middleware::Params;
-use pod_utils::ValueExt;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use std::fs;
+use std::sync::{Arc, Mutex};
 use tower_http::cors::CorsLayer;
 
 // Identity server state
@@ -115,7 +115,7 @@ async fn request_challenge(
 
     // Generate a random challenge
     let challenge: String = (0..32)
-        .map(|_| rand::thread_rng().gen::<u8>())
+        .map(|_| rand::rng().random::<u8>())
         .map(|b| format!("{:02x}", b))
         .collect();
 
@@ -291,12 +291,12 @@ async fn register_with_podnet_server(
 // Keypair management functions
 fn load_or_create_keypair(keypair_file: &str) -> anyhow::Result<(String, SecretKey, PublicKey)> {
     let server_id = "strawman-identity-server".to_string();
-    
+
     if fs::metadata(keypair_file).is_ok() {
         log::info!("Loading existing keypair from: {}", keypair_file);
         let keypair_json = fs::read_to_string(keypair_file)?;
         let keypair: IdentityServerKeypair = serde_json::from_str(&keypair_json)?;
-        
+
         // Verify server_id matches
         if keypair.server_id != server_id {
             return Err(anyhow::anyhow!(
@@ -305,29 +305,29 @@ fn load_or_create_keypair(keypair_file: &str) -> anyhow::Result<(String, SecretK
                 keypair.server_id
             ));
         }
-        
+
         // Decode secret key
         let secret_key_bytes = hex::decode(&keypair.secret_key)?;
         let secret_key_bigint = num_bigint::BigUint::from_bytes_le(&secret_key_bytes);
         let secret_key = SecretKey(secret_key_bigint);
-        
+
         // Verify public key matches
         let expected_public_key = secret_key.public_key();
         if expected_public_key != keypair.public_key {
             return Err(anyhow::anyhow!("Keypair public key mismatch"));
         }
-        
+
         log::info!("✓ Keypair loaded successfully");
         log::info!("Created at: {}", keypair.created_at);
-        
+
         Ok((server_id, secret_key, keypair.public_key))
     } else {
         log::info!("Creating new keypair and saving to: {}", keypair_file);
-        
+
         // Generate new keypair
         let secret_key = SecretKey::new_rand();
         let public_key = secret_key.public_key();
-        
+
         // Save keypair to file
         let keypair = IdentityServerKeypair {
             server_id: server_id.clone(),
@@ -335,12 +335,12 @@ fn load_or_create_keypair(keypair_file: &str) -> anyhow::Result<(String, SecretK
             public_key,
             created_at: chrono::Utc::now().to_rfc3339(),
         };
-        
+
         let keypair_json = serde_json::to_string_pretty(&keypair)?;
         fs::write(keypair_file, keypair_json)?;
-        
+
         log::info!("✓ New keypair created and saved");
-        
+
         Ok((server_id, secret_key, public_key))
     }
 }
@@ -354,7 +354,7 @@ async fn main() -> anyhow::Result<()> {
     // Load or create server keypair
     let keypair_file = std::env::var("IDENTITY_KEYPAIR_FILE")
         .unwrap_or_else(|_| "identity-server-keypair.json".to_string());
-    
+
     let (server_id, server_secret_key, server_public_key) = load_or_create_keypair(&keypair_file)?;
 
     log::info!("Identity Server ID: {}", server_id);

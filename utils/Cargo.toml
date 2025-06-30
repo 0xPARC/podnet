@@ -1,8 +1,9 @@
 [package]
 name = "pod-utils"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
-pod2 = { git = "https://github.com/0xPARC/pod2.git" }
-log = "0.4"
+# Workspace dependencies
+pod2.workspace = true
+log.workspace = true

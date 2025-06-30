@@ -1,29 +1,27 @@
 [package]
 name = "podnet-server"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
-axum = { version = "0.7", features = ["macros"]}
-tokio = { version = "1.0", features = ["full"] }
-rusqlite = { version = "0.31", features = ["bundled"] }
-pulldown-cmark = "0.10"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+# Workspace dependencies (shared)
+pod2.workspace = true
+plonky2.workspace = true
+pod-utils.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+hex.workspace = true
+log.workspace = true
+num-bigint.workspace = true
+chrono.workspace = true
+
+# Server-specific dependencies
+axum = { version = "0.7", features = ["macros"] }
 tower = "0.4"
 tower-http = { version = "0.5", features = ["cors", "fs"] }
-anyhow = "1.0"
-sha2 = "0.10"
-hex = "0.4"
-log = "0.4"
+rusqlite = { version = "0.31", features = ["bundled"] }
+pulldown-cmark = "0.10"
 env_logger = "0.11"
-pod2 = { git = "https://github.com/0xPARC/pod2.git" }
-num-bigint = "0.4"
-chrono = { version = "0.4", features = ["serde"] }
-plonky2 = { git = "https://github.com/0xPolygonZero/plonky2.git" }
-pod-utils = { path = "../utils" }
-
-[profile.release-with-debug]
-inherits = "release"
-debug = true
-
+sha2 = "0.10"

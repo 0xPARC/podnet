@@ -233,11 +233,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .short('o')
                         .long("output")
                         .default_value("keypair.json"),
-                    Arg::new("name")
-                        .help("Name/identifier for this keypair")
-                        .short('n')
-                        .long("name")
-                        .default_value("default"),
                 ]),
         )
         .subcommand(
@@ -316,8 +311,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match matches.subcommand() {
         Some(("keygen", sub_matches)) => {
             let output_file = sub_matches.get_one::<String>("output").unwrap();
-            let name = sub_matches.get_one::<String>("name").unwrap();
-            keygen::generate_keypair(name, output_file)?;
+            keygen::generate_keypair(output_file)?;
         }
         Some(("publish", sub_matches)) => {
             let keypair_file = sub_matches.get_one::<String>("keypair").unwrap();
