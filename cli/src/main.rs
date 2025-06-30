@@ -1,5 +1,6 @@
 mod cli;
 mod commands;
+mod conversion;
 mod utils;
 mod verification;
 
@@ -28,6 +29,28 @@ fn create_enhanced_html_document_with_author(
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PodNet Content - Post {id}</title>
+    <script>
+MathJax = {{
+  tex: {{
+    inlineMath: [['$', '$'], ['\\(', '\\)']],
+    displayMath: [['$$', '$$'], ['\\[', '\\]']],
+    processEscapes: true,
+    processEnvironments: true,
+    packages: {{'[+]': ['textcomp', 'textmacros']}},
+    macros: {{
+      textbf: ['\\mathbf{{#1}}', 1],
+      texttt: ['\\mathtt{{#1}}', 1]
+    }}
+  }},
+  options: {{
+    ignoreHtmlClass: 'tex2jax_ignore',
+    processHtmlClass: 'tex2jax_process'
+  }}
+}};
+</script>
+<script type="text/javascript" id="MathJax-script" async
+  src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js">
+</script>
     <style>
         body {{
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
@@ -316,11 +339,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(("publish", sub_matches)) => {
             let keypair_file = sub_matches.get_one::<String>("keypair").unwrap();
             let content = get_content_from_args(sub_matches)?;
+            let file_path = sub_matches.get_one::<String>("file");
+            let format_override = sub_matches.get_one::<String>("format");
             let server = sub_matches.get_one::<String>("server").unwrap();
             let post_id = sub_matches.get_one::<String>("post_id");
             let identity_pod_file = sub_matches.get_one::<String>("identity_pod").unwrap();
             let use_mock = sub_matches.get_flag("mock");
-            publish::publish_content(keypair_file, &content, server, post_id, identity_pod_file, use_mock).await?;
+            publish::publish_content(keypair_file, &content, file_path, format_override, server, post_id, identity_pod_file, use_mock).await?;
         }
         Some(("get-post", sub_matches)) => {
             let post_id = sub_matches.get_one::<String>("post_id").unwrap();

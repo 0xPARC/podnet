@@ -48,10 +48,14 @@ pub fn content_args() -> Vec<Arg> {
             .long("content")
             .conflicts_with("file"),
         Arg::new("file")
-            .help("Markdown file to publish")
+            .help("File to publish (supports Markdown, LaTeX, Typst)")
             .short('f')
             .long("file")
             .conflicts_with("content"),
+        Arg::new("format")
+            .help("Force document format (markdown, latex, typst). If not specified, format will be auto-detected.")
+            .long("format")
+            .value_parser(["markdown", "latex", "typst"]),
     ]
 }
 

@@ -3,7 +3,7 @@ use axum::{
     http::StatusCode,
     response::Json,
 };
-use pulldown_cmark::{Options, Parser, html};
+use pulldown_cmark::{Event, Options, Parser, html};
 use std::sync::Arc;
 
 use pod2::{frontend::SignedPod, middleware::KEY_TYPE};
@@ -268,14 +268,52 @@ pub async fn get_rendered_document_by_id(
     }
 
     let mut options = Options::empty();
+    options.insert(Options::ENABLE_TABLES);
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_TABLES);
     options.insert(Options::ENABLE_FOOTNOTES);
+    options.insert(Options::ENABLE_SUPERSCRIPT);
+    options.insert(Options::ENABLE_TASKLISTS);
+    options.insert(Options::ENABLE_GFM);
+    options.insert(Options::ENABLE_SMART_PUNCTUATION);
+    options.insert(Options::ENABLE_HEADING_ATTRIBUTES);
 
     let content = &document.content.unwrap();
+
     let parser = Parser::new_ext(content, options);
+    let mut events = Vec::new();
+    let mut in_math = false;
+    let mut math_content = String::new();
+
+    // skip math
+    for event in parser {
+        match event {
+            Event::Text(text) => {
+                let text_str = text.as_ref();
+                if text_str.starts_with("$$") {
+                    in_math = true;
+                    math_content = text_str.to_string();
+                } else if text_str.ends_with("$$") && in_math {
+                    math_content.push_str(text_str);
+                    events.push(Event::Html(math_content.clone().into()));
+                    math_content.clear();
+                    in_math = false;
+                } else if in_math {
+                    math_content.push_str(text_str);
+                } else {
+                    events.push(Event::Text(text));
+                }
+            }
+            _ if in_math => {
+                // Skip other events while in math mode
+                continue;
+            }
+            other => events.push(other),
+        }
+    }
+
     let mut html_output = String::new();
-    html::push_html(&mut html_output, parser);
+    html::push_html(&mut html_output, events.into_iter());
     document.content = Some(html_output.clone());
 
     Ok(Json(document))

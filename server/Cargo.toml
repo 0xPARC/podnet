@@ -22,6 +22,6 @@ axum = { version = "0.7", features = ["macros"] }
 tower = "0.4"
 tower-http = { version = "0.5", features = ["cors", "fs"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
-pulldown-cmark = "0.10"
+pulldown-cmark = "0.13"
 env_logger = "0.11"
 sha2 = "0.10"

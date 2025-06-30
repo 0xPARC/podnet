@@ -15,18 +15,50 @@ use pod2::op;
 use std::fs::File;
 use std::io::Write;
 
+use crate::conversion::{detect_format, convert_to_markdown, DocumentFormat};
 use crate::utils::handle_error_response;
 
 pub async fn publish_content(
     keypair_file: &str,
     content: &str,
+    file_path: Option<&String>,
+    format_override: Option<&String>,
     server_url: &str,
     post_id: Option<&String>,
     identity_pod_file: &str,
     use_mock: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("Publishing content to server using main pod verification...");
-    println!("Content: {content}");
+    
+    // Step 1: Determine document format
+    let detected_format = if let Some(format_str) = format_override {
+        DocumentFormat::from_str(format_str)
+            .ok_or_else(|| format!("Invalid format: {}", format_str))?
+    } else {
+        detect_format(content, file_path.map(|s| s.as_str()))
+    };
+    
+    println!("Detected format: {:?}", detected_format);
+    
+    // Step 2: Convert to Markdown only if necessary
+    let markdown_content = if detected_format != DocumentFormat::Markdown {
+        let converted = convert_to_markdown(content, &detected_format)?;
+        println!("✓ Content converted from {:?} to Markdown", detected_format);
+        println!("Converted content preview: {}", 
+            if converted.len() > 200 {
+                format!("{}...", &converted[0..200])
+            } else {
+                converted.clone()
+            }
+        );
+        converted
+    } else {
+        println!("Content is already in Markdown format");
+        content.to_string()
+    };
+    
+    // Use the converted markdown content for the rest of the process
+    let content = &markdown_content;
 
     // Load and verify identity pod
     println!("Loading identity pod from: {identity_pod_file}");

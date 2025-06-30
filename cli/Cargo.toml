@@ -21,3 +21,4 @@ reqwest.workspace = true
 clap = { version = "4.0", features = ["derive"] }
 sha2 = "0.10"
 webbrowser = "0.8"
+tempfile = "3.0"
