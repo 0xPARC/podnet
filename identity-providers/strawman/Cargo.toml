@@ -1,0 +1,21 @@
+[package]
+name = "podnet-ident-strawman"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = "0.7"
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+env_logger = "0.10"
+log = "0.4"
+tower-http = { version = "0.5", features = ["cors"] }
+pod2 = { git = "https://github.com/0xPARC/pod2.git" }
+rand = "0.8"
+hex = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1.0"
+reqwest = { version = "0.11", features = ["json"] }
+pod-utils = { path = "../pod-utils" }
+num-bigint = "0.4"
