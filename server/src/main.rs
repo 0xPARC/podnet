@@ -1,6 +1,5 @@
 mod db;
 mod handlers;
-mod models;
 mod pod;
 mod storage;
 
@@ -54,6 +53,8 @@ async fn main() -> anyhow::Result<()> {
             "/identity/register",
             post(handlers::register_identity_server),
         )
+        // Upvote routes
+        .route("/documents/:id/upvote", post(handlers::upvote_document))
         .layer(CorsLayer::permissive())
         .with_state(state);
 
@@ -70,6 +71,7 @@ async fn main() -> anyhow::Result<()> {
     log::info!("  POST /publish                - Publish new document");
     log::info!("  POST /register               - Register user with public key");
     log::info!("  POST /identity/register      - Register identity server");
+    log::info!("  POST /documents/:id/upvote   - Upvote a document");
 
     axum::serve(listener, app).await?;
     Ok(())

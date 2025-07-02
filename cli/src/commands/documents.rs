@@ -1,6 +1,8 @@
-use pod_utils::mainpod::verify_publish_verification_main_pod;
+use crate::utils::{
+    extract_document_metadata, get_server_public_key, handle_error_response, truncate_pod_json,
+};
 use crate::verification::verify_timestamp_pod_signature;
-use crate::utils::{handle_error_response, extract_document_metadata, get_server_public_key, truncate_pod_json};
+use podnet_models::mainpod::verify_publish_verification_main_pod;
 
 pub async fn get_document_by_id(
     document_id: &str,
@@ -17,7 +19,8 @@ pub async fn get_document_by_id(
 
         if let Some(content) = document.get("content").and_then(|v| v.as_str()) {
             let (content_id, created_at, post_id, revision) = extract_document_metadata(&document);
-            print_document_metadata(&content_id, &created_at, post_id, revision);
+            let upvote_count = document.pointer("/metadata/upvote_count").and_then(|v| v.as_i64()).unwrap_or(0);
+            print_document_metadata(&content_id, &created_at, post_id, revision, upvote_count);
             println!("Content:\n{content}");
         } else {
             println!("No content found for document ID: {document_id}");
@@ -46,7 +49,8 @@ pub async fn render_document_by_id(
 
         if let Some(content) = document.get("content").and_then(|v| v.as_str()) {
             let (content_id, created_at, post_id, revision) = extract_document_metadata(&document);
-            print_document_metadata(&content_id, &created_at, post_id, revision);
+            let upvote_count = document.pointer("/metadata/upvote_count").and_then(|v| v.as_i64()).unwrap_or(0);
+            print_document_metadata(&content_id, &created_at, post_id, revision, upvote_count);
             println!("Rendered HTML:\n{content}");
         } else {
             println!("No content found for document ID: {document_id}");
@@ -74,8 +78,11 @@ pub async fn list_documents(server_url: &str) -> Result<(), Box<dyn std::error::
             }
 
             println!("Available documents:");
-            println!("{:<6} {:<12} {:<8} {:<20} {:<66} {:<52} {:<52}", "ID", "Post", "Rev", "Created", "Content Hash", "Main Pod", "Timestamp Pod");
-            println!("{}", "-".repeat(250));
+            println!(
+                "{:<6} {:<12} {:<8} {:<8} {:<20} {:<66} {:<52} {:<52}",
+                "ID", "Post", "Rev", "Upvotes", "Created", "Content Hash", "Main Pod", "Timestamp Pod"
+            );
+            println!("{}", "-".repeat(258));
 
             for document in documents_array {
                 print_document_row(document);
@@ -96,12 +103,13 @@ pub async fn list_documents(server_url: &str) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-fn print_document_metadata(content_id: &str, created_at: &str, post_id: i64, revision: i64) {
+fn print_document_metadata(content_id: &str, created_at: &str, post_id: i64, revision: i64, upvote_count: i64) {
     println!("Document Metadata:");
     println!("  Content ID: {content_id}");
     println!("  Post ID: {post_id}");
     println!("  Revision: {revision}");
     println!("  Created: {created_at}");
+    println!("  Upvotes: {upvote_count}");
     println!();
 }
 
@@ -117,6 +125,10 @@ fn print_document_row(document: &serde_json::Value) {
         .unwrap_or(0);
     let revision = document
         .get("revision")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let upvote_count = document
+        .get("upvote_count")
         .and_then(|v| v.as_i64())
         .unwrap_or(0);
     let created_at = document
@@ -142,8 +154,15 @@ fn print_document_row(document: &serde_json::Value) {
         .unwrap_or("N/A".to_string());
 
     println!(
-        "{:<6} {:<12} {:<8} {:<20} {:<66} {:<52} {:<52}",
-        id, post_id, revision, created_at, display_content_id,
-        truncate_pod_json(&main_pod), truncate_pod_json(&timestamp_pod)
+        "{:<6} {:<12} {:<8} {:<8} {:<20} {:<66} {:<52} {:<52}",
+        id,
+        post_id,
+        revision,
+        upvote_count,
+        created_at,
+        display_content_id,
+        truncate_pod_json(&main_pod),
+        truncate_pod_json(&timestamp_pod)
     );
 }
+

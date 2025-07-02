@@ -53,32 +53,6 @@ fn load_or_generate_server_key() -> SecretKey {
     secret_key
 }
 
-pub fn create_timestamp_pod(
-    document_pod: &SignedPod,
-) -> Result<SignedPod, Box<dyn std::error::Error>> {
-    log::info!("Creating timestamp pod");
-
-    let params = Params::default();
-    let server_sk = get_server_secret_key();
-    let _server_pk = server_sk.public_key();
-
-    // Create timestamp pod signed by server
-    let timestamp = Utc::now().to_rfc3339();
-    log::info!("Creating timestamp pod with timestamp: {timestamp}");
-
-    let mut timestamp_builder = SignedPodBuilder::new(&params);
-    timestamp_builder.insert("document-pod", document_pod.id());
-    timestamp_builder.insert("timestamp", timestamp.as_str());
-
-    let mut server_signer = Signer(SecretKey(server_sk.0.clone()));
-    let timestamp_pod = timestamp_builder.sign(&mut server_signer)?;
-    timestamp_pod.verify()?;
-
-    log::info!("Timestamp pod created and verified");
-
-    Ok(timestamp_pod)
-}
-
 pub fn create_timestamp_pod_for_main_pod(
     main_pod: &MainPod,
     post_id: i64,
@@ -106,25 +80,4 @@ pub fn create_timestamp_pod_for_main_pod(
     log::info!("Timestamp pod for main pod created and verified");
 
     Ok(timestamp_pod)
-}
-
-/// Extract public verification data from a main pod
-pub fn extract_main_pod_public_data(
-    _main_pod: &pod2::frontend::MainPod,
-) -> Result<
-    (
-        String,
-        String,
-        pod2::backends::plonky2::primitives::ec::curve::Point,
-        pod2::backends::plonky2::primitives::ec::curve::Point,
-    ),
-    Box<dyn std::error::Error>,
-> {
-    // Extract public data from the main pod's public statements
-    // This is a simplified extraction - in practice you'd need to properly parse the public statements
-    // For now, we'll extract from the pod's public outputs
-
-    // TODO: Implement proper public statement extraction from main pod
-    // For now, return error indicating this needs to be implemented
-    Err("Main pod public data extraction not yet implemented - need to extract username, content_hash, user_public_key, and identity_server_pk from public statements".into())
 }

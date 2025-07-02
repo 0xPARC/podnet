@@ -5,11 +5,25 @@ mod utils;
 mod verification;
 
 use clap::{Arg, Command};
-use commands::{keygen, identity, documents, posts, publish};
-use pod2::backends::plonky2::primitives::ec::schnorr::SecretKey;
-use pod2::frontend::MainPod;
+use num_bigint::BigUint;
+use plonky2::field::goldilocks_field::GoldilocksField;
+use plonky2::field::types::{Field, PrimeField64};
+use plonky2::hash::poseidon::PoseidonHash;
+use plonky2::plonk::config::Hasher;
+use pod2::backends::plonky2::{
+    basetypes::DEFAULT_VD_SET, mainpod::Prover, mock::mainpod::MockProver,
+    primitives::ec::schnorr::SecretKey, signedpod::Signer,
+};
+use pod2::frontend::{MainPod, MainPodBuilder, SignedPod, SignedPodBuilder};
+use pod2::lang::parse;
+use pod2::middleware::{Params, PodProver, PodType, Value, KEY_SIGNER, KEY_TYPE};
+use pod2::op;
+use pod_utils::ValueExt;
+use podnet_models::{get_publish_verification_predicate, mainpod::verify_publish_verification_main_pod};
 use std::fs::File;
+
 use cli::*;
+use commands::{keygen, identity, documents, posts, publish, upvote};
 use utils::*;
 use verification::*;
 
@@ -329,6 +343,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .default_value("identity.pod"),
                 ]),
         )
+        .subcommand(
+            Command::new("upvote")
+                .about("Upvote a document with cryptographic verification using main pod")
+                .args([
+                    keypair_arg(),
+                    server_arg(),
+                    document_id_arg(),
+                    identity_pod_arg(),
+                    mock_arg(),
+                ]),
+        )
         .get_matches();
 
     match matches.subcommand() {
@@ -382,6 +407,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let output_file = sub_matches.get_one::<String>("output").unwrap();
             identity::get_identity(keypair_file, identity_server, username, output_file).await?;
         }
+        Some(("upvote", sub_matches)) => {
+            let keypair_file = sub_matches.get_one::<String>("keypair").unwrap();
+            let server = sub_matches.get_one::<String>("server").unwrap();
+            let document_id = sub_matches.get_one::<String>("document_id").unwrap();
+            let identity_pod = sub_matches.get_one::<String>("identity_pod").unwrap();
+            let use_mock = sub_matches.get_flag("mock");
+            upvote::upvote_document(keypair_file, document_id, server, identity_pod, use_mock).await?;
+        }
         _ => {
             println!("No valid subcommand provided. Use --help for usage information.");
         }
@@ -399,20 +432,6 @@ async fn publish_content(
     identity_pod_file: &str,
     use_mock: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use num_bigint::BigUint;
-    use plonky2::field::goldilocks_field::GoldilocksField;
-    use plonky2::field::types::{Field, PrimeField64};
-    use plonky2::hash::poseidon::PoseidonHash;
-    use plonky2::plonk::config::Hasher;
-    use pod2::backends::plonky2::{
-        basetypes::DEFAULT_VD_SET, mainpod::Prover, mock::mainpod::MockProver,
-        signedpod::Signer,
-    };
-    use pod2::frontend::{MainPodBuilder, SignedPod, SignedPodBuilder};
-    use pod2::lang::parse;
-    use pod2::middleware::{Params, PodProver, PodType, Value, KEY_SIGNER, KEY_TYPE};
-    use pod2::{op};
-    use pod_utils::ValueExt;
 
     println!("Publishing content to server using main pod verification...");
     println!("Content: {content}");
@@ -741,45 +760,33 @@ async fn view_post_in_browser(
 
         let rendered_document: serde_json::Value = render_response.json().await?;
 
-        let html_content = rendered_document
-            .get("content")
-            .and_then(|v| v.as_str())
-            .ok_or("Rendered document missing content field")?;
-        let (content_id, created_at, _, revision) = extract_document_metadata(&rendered_document);
+        // Parse the document directly using the shared types
+        let document: podnet_models::Document = serde_json::from_value(rendered_document.clone())
+            .map_err(|e| format!("Failed to parse document: {}", e))?;
 
-        // Get username first
-        let username = rendered_document
-            .get("user_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Unknown");
+        let html_content = &document.content;
+        
+        let content_id = document.metadata.content_id.clone();
+        let created_at = document.metadata.created_at.as_deref().unwrap_or("Unknown").to_string();
+        let revision = document.metadata.revision;
+        let username = document.metadata.user_id.clone();
+        let upvote_count = document.metadata.upvote_count;
 
         // Verify signatures (required)
         println!("Verifying signatures for revision {revision}...");
-
-        // Verify main pod signature and public statements
-        let pod_value = rendered_document
-            .get("pod")
-            .ok_or("Document missing required pod field")?;
         
-        let main_pod = serde_json::from_value::<pod2::frontend::MainPod>(pod_value.clone())
-            .map_err(|e| format!("Failed to parse main pod: {}", e))?;
-        
-        use pod_utils::mainpod::verify_publish_verification_main_pod;
-        verify_publish_verification_main_pod(&main_pod, &content_id, username)?;
-        println!("Main pod: {}", main_pod);
+        verify_publish_verification_main_pod(&document.metadata.pod, &content_id, &username)?;
+        println!("Main pod: {}", document.metadata.pod);
         println!("✓ Main pod verification completed");
 
         // Verify timestamp pod signature (required)
-        let timestamp_pod = rendered_document
-            .get("timestamp_pod")
-            .ok_or("Document missing required timestamp_pod field")?;
+        println!("Verifying timestamp pod signature...");
+        println!("Timestamp pod: {}", document.metadata.timestamp_pod);
         
-        if timestamp_pod.is_null() {
-            return Err("Timestamp pod is null - document verification failed".into());
-        }
-       
-        println!("Timestamp pod: {}", timestamp_pod);
-        verify_timestamp_pod_signature(timestamp_pod, &server_public_key)?;
+        // Convert SignedPod to JSON value for verification function
+        let timestamp_pod_json = serde_json::to_value(&document.metadata.timestamp_pod)
+            .map_err(|e| format!("Failed to serialize timestamp pod: {}", e))?;
+        verify_timestamp_pod_signature(&timestamp_pod_json, &server_public_key)?;
 
         document_data.push((
             doc_id,
@@ -788,6 +795,7 @@ async fn view_post_in_browser(
             created_at,
             username.to_string(),
             html_content.to_string(),
+            upvote_count,
         ));
     }
 
@@ -804,7 +812,7 @@ async fn view_post_in_browser(
     let mut embedded_documents = String::new();
 
     if document_data.len() > 1 {
-        for (i, (doc_id, doc_revision, content_id, doc_created, username, html_content)) in
+        for (i, (doc_id, doc_revision, content_id, doc_created, username, html_content, upvote_count)) in
             document_data.iter().enumerate()
         {
             let is_current = i == 0; // First item is the latest
@@ -815,18 +823,20 @@ async fn view_post_in_browser(
                 r#"<div class="revision-item{current_class}" data-doc-id="{doc_id}" onclick="showRevision({doc_id})">
                     <div class="revision-link">Revision {doc_revision}</div>
                     <div class="revision-date">{doc_created}</div>
+                    <div class="upvote-count">👍 {upvote_count}</div>
                     {current_indicator}
                 </div>"#,
                 current_class = current_class,
                 doc_id = doc_id,
                 doc_revision = doc_revision,
                 doc_created = doc_created,
+                upvote_count = upvote_count,
                 current_indicator = if is_current { "<div style=\"font-size: 0.8em; color: #28a745; font-weight: bold;\">← Current</div>" } else { "" }
             ));
 
             // Add hidden div with document content
             embedded_documents.push_str(&format!(
-                r#"<div id="document-{doc_id}" class="document-content" style="display: {display_style};" data-content-id="{content_id}" data-created="{doc_created}" data-author="{username}" data-revision="{doc_revision}">
+                r#"<div id="document-{doc_id}" class="document-content" style="display: {display_style};" data-content-id="{content_id}" data-created="{doc_created}" data-author="{username}" data-revision="{doc_revision}" data-upvotes="{upvote_count}">
                     {html_content}
                 </div>"#,
                 doc_id = doc_id,
@@ -835,16 +845,23 @@ async fn view_post_in_browser(
                 doc_created = doc_created,
                 username = username,
                 doc_revision = doc_revision,
+                upvote_count = upvote_count,
                 html_content = html_content
             ));
         }
     } else {
-        let (doc_id, doc_revision, content_id, doc_created, username, html_content) =
+        let (doc_id, doc_revision, content_id, doc_created, username, html_content, upvote_count) =
             &document_data[0];
-        revision_links.push_str("<div style=\"padding: 10px; color: #666; font-style: italic;\">This post has only one revision.</div>");
+        revision_links.push_str(&format!(
+            r#"<div style="padding: 10px; color: #666; font-style: italic;">
+                This post has only one revision.
+                <div class="upvote-count" style="margin-top: 5px; color: #333;">👍 {upvote_count}</div>
+            </div>"#,
+            upvote_count = upvote_count
+        ));
 
         embedded_documents.push_str(&format!(
-            r#"<div id="document-{doc_id}" class="document-content" style="display: block;" data-content-id="{content_id}" data-created="{doc_created}" data-author="{username}" data-revision="{doc_revision}">
+            r#"<div id="document-{doc_id}" class="document-content" style="display: block;" data-content-id="{content_id}" data-created="{doc_created}" data-author="{username}" data-revision="{doc_revision}" data-upvotes="{upvote_count}">
                 {html_content}
             </div>"#,
             doc_id = doc_id,
@@ -852,6 +869,7 @@ async fn view_post_in_browser(
             doc_created = doc_created,
             username = username,
             doc_revision = doc_revision,
+            upvote_count = upvote_count,
             html_content = html_content
         ));
     }
@@ -877,6 +895,7 @@ async fn view_post_in_browser(
     println!("Latest document ID: {}", latest_doc.2);
     println!("Latest revision: {}", latest_doc.1);
     println!("Latest created: {}", latest_doc.3);
+    println!("Latest upvotes: {}", latest_doc.6);
 
     // Open in default browser
     if let Err(e) = webbrowser::open(&temp_file) {
@@ -1031,14 +1050,6 @@ fn create_publish_verification_main_pod(
     content_hash: &str,
     use_mock: bool,
 ) -> Result<MainPod, Box<dyn std::error::Error>> {
-    use pod2::backends::plonky2::{
-        basetypes::DEFAULT_VD_SET, mainpod::Prover, mock::mainpod::MockProver,
-    };
-    use pod2::frontend::MainPodBuilder;
-    use pod2::lang::parse;
-    use pod2::middleware::{Params, PodProver, PodType, KEY_SIGNER, KEY_TYPE};
-    use pod2::op;
-    use pod_utils::{get_publish_verification_predicate, ValueExt};
 
     let mut params = Params::default();
     

@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 # Workspace dependencies (shared)
+podnet-models = { path = "../models" }
 pod2.workspace = true
 plonky2.workspace = true
 pod-utils.workspace = true

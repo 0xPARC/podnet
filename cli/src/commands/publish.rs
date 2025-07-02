@@ -3,7 +3,8 @@ use plonky2::field::goldilocks_field::GoldilocksField;
 use plonky2::field::types::{Field, PrimeField64};
 use plonky2::hash::poseidon::PoseidonHash;
 use plonky2::plonk::config::Hasher;
-use pod_utils::{ValueExt, get_publish_verification_predicate};
+use pod_utils::ValueExt;
+use podnet_models::get_publish_verification_predicate;
 use pod2::backends::plonky2::primitives::ec::schnorr::SecretKey;
 use pod2::backends::plonky2::{
     basetypes::DEFAULT_VD_SET, mainpod::Prover, mock::mainpod::MockProver, signedpod::Signer,
@@ -113,6 +114,7 @@ pub async fn publish_content(
     let params = Params::default();
     let mut document_builder = SignedPodBuilder::new(&params);
 
+    document_builder.insert("request_type", "publish");
     document_builder.insert("content_hash", content_hash.as_str());
     document_builder.insert("timestamp", chrono::Utc::now().timestamp());
 

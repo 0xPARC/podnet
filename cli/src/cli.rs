@@ -59,6 +59,21 @@ pub fn content_args() -> Vec<Arg> {
     ]
 }
 
+pub fn identity_pod_arg() -> Arg {
+    Arg::new("identity_pod")
+        .help("Path to identity pod file")
+        .short('i')
+        .long("identity-pod")
+        .required(true)
+}
+
+pub fn mock_arg() -> Arg {
+    Arg::new("mock")
+        .help("Use mock provers for faster testing")
+        .long("mock")
+        .action(clap::ArgAction::SetTrue)
+}
+
 pub fn get_content_from_args(matches: &clap::ArgMatches) -> Result<String, Box<dyn std::error::Error>> {
     if let Some(content) = matches.get_one::<String>("content") {
         Ok(content.clone())
