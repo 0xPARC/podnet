@@ -1599,6 +1599,7 @@ dependencies = [
 [[package]]
 name = "pod2"
 version = "0.1.0"
+source = "git+https://github.com/0xPARC/pod2.git#24cafde231d532353d9f29cbabf39d24ce563e6c"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
