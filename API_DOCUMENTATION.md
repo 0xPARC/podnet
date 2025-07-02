@@ -16,6 +16,9 @@ PodNet is a content publishing platform using POD2 to verify:
 
 ## PodNet Server API (Port 3000)
 
+Note: The ultimate source of truth on the objects each route requests is in
+`models/src/lib.rs`.
+
 ### Root Endpoint
 - **GET** `/` - Server status and information
 
