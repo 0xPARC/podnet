@@ -1,3 +1,5 @@
+mod config;
+
 use chrono::Utc;
 use num_bigint::BigUint;
 use pod2::{
@@ -9,6 +11,8 @@ use pod2::{
     middleware::Params,
 };
 use std::{fs, path::Path, sync::OnceLock};
+
+pub use config::PodConfig;
 
 // Server's secret key for signing timestamp pods (in production, load from secure storage)
 static SERVER_SECRET_KEY: OnceLock<SecretKey> = OnceLock::new();

@@ -1789,7 +1789,7 @@ dependencies = [
  "pod2",
  "podnet-models",
  "pulldown-cmark",
- "rand 0.8.5",
+ "rand 0.9.1",
  "rusqlite",
  "serde",
  "serde_json",

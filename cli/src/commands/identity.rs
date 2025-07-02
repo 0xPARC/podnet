@@ -3,14 +3,13 @@ use crate::utils::handle_error_response;
 use pod2::backends::plonky2::{primitives::ec::curve::Point as PublicKey, signedpod::Signer};
 use pod2::frontend::{SignedPod, SignedPodBuilder};
 use pod2::middleware::Params;
+use pod_utils::ValueExt;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 
 #[derive(Debug, Deserialize)]
 pub struct ChallengeResponse {
-    pub challenge: String,
-    pub server_id: String,
-    pub server_public_key: PublicKey,
+    pub challenge_pod: SignedPod,
 }
 
 #[derive(Debug, Serialize)]
@@ -26,7 +25,8 @@ pub struct IdentityResponse {
 
 #[derive(Debug, Serialize)]
 pub struct IdentityRequest {
-    pub challenge_response: SignedPod,
+    pub server_challenge_pod: SignedPod,
+    pub user_response_pod: SignedPod,
 }
 
 pub async fn get_identity(
@@ -55,7 +55,7 @@ pub async fn get_identity(
 
     let client = reqwest::Client::new();
     let challenge_response = client
-        .post(format!("{}/challenge", identity_server_url))
+        .post(format!("{}/user/challenge", identity_server_url))
         .header("Content-Type", "application/json")
         .json(&challenge_request)
         .send()
@@ -69,7 +69,18 @@ pub async fn get_identity(
     }
 
     let challenge_data: ChallengeResponse = challenge_response.json().await?;
-    println!("Received challenge: {}", challenge_data.challenge);
+    
+    // Verify the challenge pod signature
+    challenge_data.challenge_pod.verify()?;
+    println!("✓ Received and verified challenge pod from identity server");
+    
+    // Extract challenge from the signed pod
+    let challenge = challenge_data.challenge_pod
+        .get("challenge")
+        .and_then(|v| v.as_str())
+        .ok_or("Challenge pod missing challenge field")?;
+    
+    println!("Challenge: {}", challenge);
 
     // Step 2: Sign the challenge and send back to get identity pod
     println!("Signing challenge response...");
@@ -83,20 +94,28 @@ pub async fn get_identity(
     let params = Params::default();
     let mut challenge_builder = SignedPodBuilder::new(&params);
 
-    challenge_builder.insert("challenge", challenge_data.challenge.as_str());
+    challenge_builder.insert("challenge", challenge);
     challenge_builder.insert("username", username);
 
     // Sign the challenge response
     let mut user_signer = Signer(secret_key);
     let challenge_response_pod = challenge_builder.sign(&mut user_signer)?;
 
+    // Extract server_id from challenge pod before moving it
+    let server_id = challenge_data.challenge_pod
+        .get("server_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
     let identity_request = IdentityRequest {
-        challenge_response: challenge_response_pod,
+        server_challenge_pod: challenge_data.challenge_pod,
+        user_response_pod: challenge_response_pod,
     };
 
     // Step 3: Submit signed challenge to get identity pod
     println!("Submitting signed challenge to get identity pod...");
-    println!("Pod is: {}", identity_request.challenge_response);
+    println!("Server challenge pod verified: ✓");
+    println!("User response pod created: ✓");
 
     let identity_response = client
         .post(format!("{}/identity", identity_server_url))
@@ -125,7 +144,11 @@ pub async fn get_identity(
     println!("✓ Identity pod saved to: {}", output_file);
     println!("✓ Identity acquired successfully!");
     println!("Username: {}", username);
-    println!("Identity Server: {}", challenge_data.server_id);
+    
+    // Display server_id if available
+    if let Some(server_id) = server_id {
+        println!("Identity Server: {}", server_id);
+    }
 
     Ok(())
 }

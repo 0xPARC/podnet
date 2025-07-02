@@ -50,24 +50,14 @@ impl Database {
             [],
         )?;
 
-        // Create users table
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT NOT NULL UNIQUE,
-                public_key TEXT NOT NULL,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )",
-            [],
-        )?;
-
         // Create identity_servers table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS identity_servers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 server_id TEXT NOT NULL UNIQUE,
                 public_key TEXT NOT NULL,
-                registration_pod TEXT NOT NULL,
+                challenge_pod TEXT NOT NULL,
+                identity_pod TEXT NOT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )",
             [],
@@ -345,66 +335,18 @@ impl Database {
         Ok(documents)
     }
 
-    // User methods
-    pub fn create_user(&self, user_id: &str, public_key: &str) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "INSERT INTO users (user_id, public_key) VALUES (?1, ?2)",
-            [user_id, public_key],
-        )?;
-        Ok(conn.last_insert_rowid())
-    }
-
-    pub fn get_user_by_id(&self, user_id: &str) -> Result<Option<User>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn
-            .prepare("SELECT id, user_id, public_key, created_at FROM users WHERE user_id = ?1")?;
-
-        let user = stmt
-            .query_row([user_id], |row| {
-                Ok(User {
-                    id: Some(row.get(0)?),
-                    user_id: row.get(1)?,
-                    public_key: row.get(2)?,
-                    created_at: Some(row.get(3)?),
-                })
-            })
-            .optional()?;
-
-        Ok(user)
-    }
-
-    pub fn get_user_by_public_key(&self, public_key: &str) -> Result<Option<User>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, user_id, public_key, created_at FROM users WHERE public_key = ?1",
-        )?;
-
-        let user = stmt
-            .query_row([public_key], |row| {
-                Ok(User {
-                    id: Some(row.get(0)?),
-                    user_id: row.get(1)?,
-                    public_key: row.get(2)?,
-                    created_at: Some(row.get(3)?),
-                })
-            })
-            .optional()?;
-
-        Ok(user)
-    }
-
     // Identity server methods
     pub fn create_identity_server(
         &self,
         server_id: &str,
         public_key: &str,
-        registration_pod: &str,
+        challenge_pod: &str,
+        identity_pod: &str,
     ) -> Result<i64> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO identity_servers (server_id, public_key, registration_pod) VALUES (?1, ?2, ?3)",
-            [server_id, public_key, registration_pod],
+            "INSERT INTO identity_servers (server_id, public_key, challenge_pod, identity_pod) VALUES (?1, ?2, ?3, ?4)",
+            [server_id, public_key, challenge_pod, identity_pod],
         )?;
         Ok(conn.last_insert_rowid())
     }
@@ -412,7 +354,7 @@ impl Database {
     pub fn get_identity_server_by_id(&self, server_id: &str) -> Result<Option<IdentityServer>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, server_id, public_key, registration_pod, created_at FROM identity_servers WHERE server_id = ?1",
+            "SELECT id, server_id, public_key, challenge_pod, identity_pod, created_at FROM identity_servers WHERE server_id = ?1",
         )?;
 
         let identity_server = stmt
@@ -421,8 +363,9 @@ impl Database {
                     id: Some(row.get(0)?),
                     server_id: row.get(1)?,
                     public_key: row.get(2)?,
-                    registration_pod: row.get(3)?,
-                    created_at: Some(row.get(4)?),
+                    challenge_pod: row.get(3)?,
+                    identity_pod: row.get(4)?,
+                    created_at: Some(row.get(5)?),
                 })
             })
             .optional()?;
@@ -436,7 +379,7 @@ impl Database {
     ) -> Result<Option<IdentityServer>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, server_id, public_key, registration_pod, created_at FROM identity_servers WHERE public_key = ?1",
+            "SELECT id, server_id, public_key, challenge_pod, identity_pod, created_at FROM identity_servers WHERE public_key = ?1",
         )?;
 
         let identity_server = stmt
@@ -445,8 +388,9 @@ impl Database {
                     id: Some(row.get(0)?),
                     server_id: row.get(1)?,
                     public_key: row.get(2)?,
-                    registration_pod: row.get(3)?,
-                    created_at: Some(row.get(4)?),
+                    challenge_pod: row.get(3)?,
+                    identity_pod: row.get(4)?,
+                    created_at: Some(row.get(5)?),
                 })
             })
             .optional()?;
@@ -457,7 +401,7 @@ impl Database {
     pub fn get_all_identity_servers(&self) -> Result<Vec<IdentityServer>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, server_id, public_key, registration_pod, created_at FROM identity_servers ORDER BY created_at DESC",
+            "SELECT id, server_id, public_key, challenge_pod, identity_pod, created_at FROM identity_servers ORDER BY created_at DESC",
         )?;
 
         let identity_servers = stmt
@@ -466,8 +410,9 @@ impl Database {
                     id: Some(row.get(0)?),
                     server_id: row.get(1)?,
                     public_key: row.get(2)?,
-                    registration_pod: row.get(3)?,
-                    created_at: Some(row.get(4)?),
+                    challenge_pod: row.get(3)?,
+                    identity_pod: row.get(4)?,
+                    created_at: Some(row.get(5)?),
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;

@@ -3,16 +3,12 @@ use axum::{
     http::StatusCode,
     response::Json,
 };
-use pulldown_cmark::{Event, Options, Parser, html};
-use std::sync::Arc;
-use pod2::frontend::{MainPod, MainPodBuilder, SignedPod, SignedPodBuilder};
-use pod2::middleware::Hash;
-use pod2::op;
 use pod_utils::ValueExt;
 use podnet_models::{
-    Document, DocumentMetadata, PublishRequest,
-    get_publish_verification_predicate,
+    Document, DocumentMetadata, PublishRequest, get_publish_verification_predicate,
 };
+use pulldown_cmark::{Event, Options, Parser, html};
+use std::sync::Arc;
 
 pub async fn get_documents(
     State(state): State<Arc<crate::AppState>>,
@@ -109,34 +105,14 @@ pub async fn publish_document(
     State(state): State<Arc<crate::AppState>>,
     Json(payload): Json<PublishRequest>,
 ) -> Result<Json<Document>, StatusCode> {
-    use pod2::backends::plonky2::{
-        basetypes::DEFAULT_VD_SET, mainpod::Prover, mock::mainpod::MockProver,
-    };
-    use pod2::frontend::MainPodBuilder;
     use pod2::lang::parse;
     use pod2::middleware::Statement;
-    use pod2::middleware::{KEY_SIGNER, KEY_TYPE, Params, PodProver, PodType};
-    use pod2::op;
 
     log::info!("Starting document publish with main pod verification");
     log::debug!("Content length: {} bytes", payload.content.len());
 
-    let mut params = Params::default();
-
-    // Choose prover based on mock flag
-    let mock_prover = MockProver {};
-    let real_prover = Prover {};
-    let use_mock = false;
-    let (vd_set, prover): (_, &dyn PodProver) = if use_mock {
-        println!("Using MockMainPod for publish verification");
-        (
-            &pod2::middleware::VDSet::new(8, &[]).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-            &mock_prover,
-        )
-    } else {
-        println!("Using MainPod for publish verification");
-        (&*DEFAULT_VD_SET, &real_prover)
-    };
+    let params = state.pod_config.get_params();
+    let (_vd_set, _prover) = state.pod_config.get_prover_setup()?;
 
     // Verify main pod proof
     log::info!("Verifying main pod proof");
@@ -248,12 +224,6 @@ pub async fn publish_document(
     }
     log::info!("✓ Content hash verified");
 
-    // Store the main pod instead of a temporary pod
-    let pod_json = serde_json::to_string(&payload.main_pod).map_err(|e| {
-        log::error!("Failed to convert main pod to JSON: {e}");
-        StatusCode::BAD_REQUEST
-    })?;
-
     // Determine post_id: either create new post or use existing
     log::info!("Determining post ID");
     let final_post_id = if post_id != -1 {
@@ -306,9 +276,13 @@ pub async fn publish_document(
         let post_id = document.metadata.post_id;
 
         tokio::spawn(async move {
-            if let Err(e) =
-                super::upvotes::generate_base_case_upvote_pod(state_clone, document_id, &content_hash, post_id)
-                    .await
+            if let Err(e) = super::upvotes::generate_base_case_upvote_pod(
+                state_clone,
+                document_id,
+                &content_hash,
+                post_id,
+            )
+            .await
             {
                 log::error!(
                     "Failed to generate base case upvote count pod for document {}: {}",
@@ -322,3 +296,4 @@ pub async fn publish_document(
     log::info!("Document publish completed successfully using main pod verification");
     Ok(Json(document))
 }
+

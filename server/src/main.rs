@@ -16,6 +16,7 @@ pub struct AppState {
     pub db: Arc<db::Database>,
     pub storage: Arc<storage::ContentAddressedStorage>,
     pub config: config::ServerConfig,
+    pub pod_config: pod::PodConfig,
 }
 
 #[tokio::main]
@@ -42,7 +43,8 @@ async fn main() -> anyhow::Result<()> {
     let storage = Arc::new(storage::ContentAddressedStorage::new("content")?);
     tracing::info!("Content storage initialized successfully");
 
-    let state = Arc::new(AppState { db, storage, config });
+    let pod_config = pod::PodConfig::new(config.mock_proofs);
+    let state = Arc::new(AppState { db, storage, config, pod_config });
 
     tracing::info!("Setting up routes...");
     let app = Router::new()
@@ -59,9 +61,11 @@ async fn main() -> anyhow::Result<()> {
         )
         // Publishing route
         .route("/publish", post(handlers::publish_document))
-        // User registration
-        .route("/register", post(handlers::register_user))
         // Identity server routes
+        .route(
+            "/identity/challenge",
+            post(handlers::request_identity_challenge),
+        )
         .route(
             "/identity/register",
             post(handlers::register_identity_server),
@@ -82,7 +86,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("  GET  /documents/:id          - Get specific document");
     tracing::info!("  GET  /documents/:id/render   - Get rendered document HTML");
     tracing::info!("  POST /publish                - Publish new document");
-    tracing::info!("  POST /register               - Register user with public key");
+    tracing::info!("  POST /identity/challenge     - Request challenge for identity server");
     tracing::info!("  POST /identity/register      - Register identity server");
     tracing::info!("  POST /documents/:id/upvote   - Upvote a document");
 

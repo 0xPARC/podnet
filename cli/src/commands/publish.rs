@@ -184,7 +184,8 @@ fn create_publish_verification_main_pod(
     content_hash: &Hash,
     use_mock: bool,
 ) -> Result<MainPod, Box<dyn std::error::Error>> {
-    let params = Params::default();
+    let mut params = Params::default();
+    params.max_custom_batch_size = 6;
 
     // Choose prover based on mock flag
     let mock_prover = MockProver {};

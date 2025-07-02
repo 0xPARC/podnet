@@ -14,9 +14,8 @@ use pod2::frontend::{SignedPod, SignedPodBuilder};
 use pod2::middleware::Params;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fs;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -25,8 +24,6 @@ pub struct IdentityServerState {
     pub server_id: String,
     pub server_secret_key: Arc<SecretKey>,
     pub server_public_key: PublicKey,
-    // Store pending challenges: challenge -> (username, user_public_key)
-    pub pending_challenges: Arc<Mutex<HashMap<String, (String, PublicKey)>>>,
 }
 
 impl Clone for IdentityServerState {
@@ -35,32 +32,45 @@ impl Clone for IdentityServerState {
             server_id: self.server_id.clone(),
             server_secret_key: Arc::clone(&self.server_secret_key),
             server_public_key: self.server_public_key,
-            pending_challenges: Arc::clone(&self.pending_challenges),
         }
     }
 }
 
-// Request/Response models
+// User registration models (new challenge-response flow)
 #[derive(Debug, Deserialize)]
-pub struct ChallengeRequest {
+pub struct UserChallengeRequest {
     pub username: String,
     pub user_public_key: PublicKey,
 }
 
 #[derive(Debug, Serialize)]
-pub struct ChallengeResponse {
-    pub challenge: String,
-    pub server_id: String,
-    pub server_public_key: PublicKey,
+pub struct UserChallengeResponse {
+    /// SignedPod containing challenge information from identity server:
+    /// - challenge: String (random challenge value)
+    /// - expires_at: String (ISO timestamp when challenge expires)
+    /// - user_public_key: Point (user's public key from request)
+    /// - username: String (username from request)
+    /// - _signer: Point (identity server's public key, automatically added by SignedPod)
+    pub challenge_pod: SignedPod,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct IdentityRequest {
-    /// SignedPod containing:
-    /// - challenge: String (challenge sent by identity server)
-    /// - username: String (requested username)
-    /// - _signer: Point (user's public key, automatically added by SignedPod)
-    pub challenge_response: SignedPod,
+    /// Identity request containing both identity server's challenge and user's response
+    /// 
+    /// server_challenge_pod contains:
+    /// - challenge: String (original challenge from identity server)
+    /// - expires_at: String (expiration timestamp)
+    /// - user_public_key: Point (user's public key)
+    /// - username: String (username)
+    /// - _signer: Point (identity server's public key)
+    ///
+    /// user_response_pod contains:
+    /// - challenge: String (same challenge value, proving user received it)
+    /// - username: String (confirming username)
+    /// - _signer: Point (user's public key, proving control of private key)
+    pub server_challenge_pod: SignedPod,
+    pub user_response_pod: SignedPod,
 }
 
 #[derive(Debug, Serialize)]
@@ -81,8 +91,20 @@ pub struct ServerInfo {
 
 // Registration models for registering with podnet-server
 #[derive(Debug, Serialize)]
-pub struct RegistrationRequest {
-    pub challenge_response: SignedPod,
+pub struct IdentityServerChallengeRequest {
+    pub server_id: String,
+    pub public_key: PublicKey,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct IdentityServerChallengeResponse {
+    pub challenge_pod: SignedPod,
+}
+
+#[derive(Debug, Serialize)]
+pub struct IdentityServerRegistrationRequest {
+    pub server_challenge_pod: SignedPod,
+    pub identity_response_pod: SignedPod,
 }
 
 #[derive(Debug, Deserialize)]
@@ -107,117 +129,190 @@ async fn root(State(state): State<IdentityServerState>) -> Json<ServerInfo> {
     })
 }
 
-// Step 1: Client requests a challenge
-async fn request_challenge(
+// Step 1: User requests a challenge for identity verification
+async fn request_user_challenge(
     State(state): State<IdentityServerState>,
-    Json(payload): Json<ChallengeRequest>,
-) -> Result<Json<ChallengeResponse>, StatusCode> {
-    tracing::info!("Challenge requested for username: {}", payload.username);
+    Json(payload): Json<UserChallengeRequest>,
+) -> Result<Json<UserChallengeResponse>, StatusCode> {
+    tracing::info!("User challenge requested for username: {}", payload.username);
 
-    // Generate a random challenge
+    // Generate a secure random challenge
     let challenge: String = (0..32)
         .map(|_| rand::rng().random::<u8>())
         .map(|b| format!("{:02x}", b))
         .collect();
 
-    // Store the challenge with associated user info
-    {
-        let mut pending = state.pending_challenges.lock().unwrap();
-        pending.insert(
-            challenge.clone(),
-            (payload.username.clone(), payload.user_public_key),
-        );
-    }
+    // Create expiration timestamp (5 minutes from now)
+    let expires_at = chrono::Utc::now() + chrono::Duration::minutes(5);
+    let expires_at_str = expires_at.to_rfc3339();
 
     tracing::info!(
-        "Generated challenge for {}: {}",
+        "Generated challenge for user {}: {}",
         payload.username,
         challenge
     );
+    tracing::info!("Challenge expires at: {}", expires_at_str);
 
-    Ok(Json(ChallengeResponse {
-        challenge,
-        server_id: state.server_id.clone(),
-        server_public_key: state.server_public_key,
+    // Create challenge pod signed by identity server
+    let params = Params::default();
+    let mut challenge_builder = SignedPodBuilder::new(&params);
+    
+    challenge_builder.insert("challenge", challenge.as_str());
+    challenge_builder.insert("expires_at", expires_at_str.as_str());
+    challenge_builder.insert("user_public_key", payload.user_public_key);
+    challenge_builder.insert("username", payload.username.as_str());
+
+    // Sign with identity server's private key
+    let mut identity_signer = Signer(SecretKey(state.server_secret_key.0.clone()));
+    let challenge_pod = challenge_builder.sign(&mut identity_signer).map_err(|e| {
+        tracing::error!("Failed to sign user challenge pod: {e}");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    tracing::info!("User challenge pod created and signed for: {}", payload.username);
+
+    Ok(Json(UserChallengeResponse {
+        challenge_pod,
     }))
 }
 
-// Step 2: Client submits signed challenge response, gets identity pod
+
+// Step 2: User submits both challenge pod and response, gets identity pod
 async fn issue_identity(
     State(state): State<IdentityServerState>,
     Json(payload): Json<IdentityRequest>,
 ) -> Result<Json<IdentityResponse>, StatusCode> {
-    // Verify the challenge response pod
-    payload.challenge_response.verify().map_err(|e| {
-        tracing::error!("Failed to verify challenge response pod: {e}");
+    tracing::info!("Processing identity request with challenge-response verification");
+
+    // 1. Verify the identity server's challenge pod signature
+    payload.server_challenge_pod.verify().map_err(|e| {
+        tracing::error!("Failed to verify server challenge pod: {e}");
         StatusCode::BAD_REQUEST
     })?;
 
-    // Extract challenge and username from the pod using ValueExt trait
+    // 2. Verify challenge pod was signed by this identity server
+    let identity_server_public_key = state.server_public_key;
+    let challenge_signer = payload
+        .server_challenge_pod
+        .get("_signer")
+        .and_then(|v| v.as_public_key())
+        .ok_or_else(|| {
+            tracing::error!("Server challenge pod missing signer");
+            StatusCode::BAD_REQUEST
+        })?;
+
+    if *challenge_signer != identity_server_public_key {
+        tracing::error!("Server challenge pod not signed by this identity server");
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    // 3. Extract and verify challenge hasn't expired
+    let expires_at_str = payload
+        .server_challenge_pod
+        .get("expires_at")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            tracing::error!("Server challenge pod missing expires_at");
+            StatusCode::BAD_REQUEST
+        })?;
+
+    let expires_at = chrono::DateTime::parse_from_rfc3339(expires_at_str).map_err(|e| {
+        tracing::error!("Invalid expires_at format: {e}");
+        StatusCode::BAD_REQUEST
+    })?;
+
+    if chrono::Utc::now() > expires_at {
+        tracing::error!("Challenge has expired");
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    // 4. Extract challenge and user info from challenge pod
     let challenge = payload
-        .challenge_response
+        .server_challenge_pod
         .get("challenge")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
         .ok_or_else(|| {
-            tracing::error!("Challenge response pod missing challenge");
+            tracing::error!("Server challenge pod missing challenge");
+            StatusCode::BAD_REQUEST
+        })?;
+
+    let user_public_key = payload
+        .server_challenge_pod
+        .get("user_public_key")
+        .and_then(|v| v.as_public_key())
+        .ok_or_else(|| {
+            tracing::error!("Server challenge pod missing user_public_key");
             StatusCode::BAD_REQUEST
         })?;
 
     let username = payload
-        .challenge_response
+        .server_challenge_pod
         .get("username")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
         .ok_or_else(|| {
-            tracing::error!("Challenge response pod missing username");
+            tracing::error!("Server challenge pod missing username");
             StatusCode::BAD_REQUEST
         })?;
 
-    // Get the signer (user's public key) using ValueExt trait
-    let user_public_key = payload
-        .challenge_response
+    // 5. Verify user's response pod
+    payload.user_response_pod.verify().map_err(|e| {
+        tracing::error!("Failed to verify user response pod: {e}");
+        StatusCode::BAD_REQUEST
+    })?;
+
+    // 6. Verify response pod signed by user
+    let response_signer = payload
+        .user_response_pod
         .get("_signer")
         .and_then(|v| v.as_public_key())
-        .copied()
         .ok_or_else(|| {
-            tracing::error!("Challenge response pod missing signer");
+            tracing::error!("User response pod missing signer");
             StatusCode::BAD_REQUEST
         })?;
 
-    // Verify the challenge exists and matches
-    let expected_user_info = {
-        let mut pending = state.pending_challenges.lock().unwrap();
-        pending.remove(&challenge).ok_or_else(|| {
-            tracing::error!("Invalid or expired challenge: {}", challenge);
+    if *response_signer != *user_public_key {
+        tracing::error!("User response pod not signed by expected user");
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    // 7. Verify response pod contains same challenge
+    let response_challenge = payload
+        .user_response_pod
+        .get("challenge")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            tracing::error!("User response pod missing challenge");
             StatusCode::BAD_REQUEST
-        })?
-    };
+        })?;
 
-    // Verify the username and public key match what was requested
-    if expected_user_info.0 != username {
-        tracing::error!(
-            "Username mismatch: expected {}, got {}",
-            expected_user_info.0,
-            username
-        );
+    if response_challenge != challenge {
+        tracing::error!("Challenge mismatch between server and user pods");
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    // Compare public keys directly
-    if expected_user_info.1 != user_public_key {
-        tracing::error!("Public key mismatch for user {}", username);
+    // 8. Verify response pod contains same username
+    let response_username = payload
+        .user_response_pod
+        .get("username")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            tracing::error!("User response pod missing username");
+            StatusCode::BAD_REQUEST
+        })?;
+
+    if response_username != username {
+        tracing::error!("Username mismatch between challenge and response pods");
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    tracing::info!("Challenge verification successful for user: {}", username);
+    tracing::info!("✓ All verifications passed for user: {}", username);
 
     // Create identity pod using SignedPodBuilder
     let params = Params::default();
     let mut identity_builder = SignedPodBuilder::new(&params);
 
-    identity_builder.insert("username", username.as_str());
-    identity_builder.insert("user_public_key", user_public_key);
+    identity_builder.insert("username", username);
+    identity_builder.insert("user_public_key", *user_public_key);
     identity_builder.insert("identity_server_id", state.server_id.as_str());
     identity_builder.insert("issued_at", chrono::Utc::now().to_rfc3339().as_str());
 
@@ -241,42 +336,79 @@ async fn register_with_podnet_server(
 ) -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Registering with podnet-server at: {}", podnet_server_url);
 
-    // First, generate a mock challenge (in a real implementation, this would come from the podnet-server)
-    let challenge = format!("challenge_{}", chrono::Utc::now().timestamp());
-    tracing::info!("Using challenge: {}", challenge);
+    let public_key = secret_key.public_key();
+    let client = reqwest::Client::new();
 
-    // Create challenge response pod
-    let params = Params::default();
-    let mut challenge_builder = SignedPodBuilder::new(&params);
-
-    challenge_builder.insert("challenge", challenge.as_str());
-    challenge_builder.insert("server_id", server_id);
-
-    // Sign the challenge response
-    let mut server_signer = Signer(SecretKey(secret_key.0.clone()));
-    let challenge_response_pod = challenge_builder.sign(&mut server_signer)?;
-
-    let registration_request = RegistrationRequest {
-        challenge_response: challenge_response_pod,
+    // Step 1: Request challenge from server
+    tracing::info!("Requesting challenge from podnet-server");
+    let challenge_request = IdentityServerChallengeRequest {
+        server_id: server_id.to_string(),
+        public_key,
     };
 
-    // Submit registration to podnet-server
-    let client = reqwest::Client::new();
-    let response = client
+    let challenge_response = client
+        .post(format!("{}/identity/challenge", podnet_server_url))
+        .header("Content-Type", "application/json")
+        .json(&challenge_request)
+        .send()
+        .await?;
+
+    if !challenge_response.status().is_success() {
+        let status = challenge_response.status();
+        let error_text = challenge_response.text().await?;
+        return Err(format!("Failed to get challenge. Status: {} - {}", status, error_text).into());
+    }
+
+    let challenge_response: IdentityServerChallengeResponse = challenge_response.json().await?;
+    tracing::info!("✓ Received challenge from podnet-server");
+
+    // Step 2: Verify the server's challenge pod
+    challenge_response.challenge_pod.verify()?;
+    tracing::info!("✓ Verified server's challenge pod signature");
+
+    // Extract challenge from server's pod
+    let challenge = challenge_response
+        .challenge_pod
+        .get("challenge")
+        .and_then(|v| v.as_str())
+        .ok_or("Server challenge pod missing challenge")?;
+
+    tracing::info!("Challenge received: {}", challenge);
+
+    // Step 3: Create identity server's response pod
+    let params = Params::default();
+    let mut response_builder = SignedPodBuilder::new(&params);
+
+    response_builder.insert("challenge", challenge);
+    response_builder.insert("server_id", server_id);
+
+    // Sign the response with identity server's private key
+    let mut identity_signer = Signer(SecretKey(secret_key.0.clone()));
+    let identity_response_pod = response_builder.sign(&mut identity_signer)?;
+
+    tracing::info!("✓ Created identity server response pod");
+
+    // Step 4: Submit both pods for registration
+    let registration_request = IdentityServerRegistrationRequest {
+        server_challenge_pod: challenge_response.challenge_pod,
+        identity_response_pod,
+    };
+
+    let registration_response = client
         .post(format!("{}/identity/register", podnet_server_url))
         .header("Content-Type", "application/json")
         .json(&registration_request)
         .send()
         .await?;
 
-    if response.status().is_success() {
-        let server_info: PodNetServerInfo = response.json().await?;
+    if registration_response.status().is_success() {
+        let server_info: PodNetServerInfo = registration_response.json().await?;
         tracing::info!("✓ Successfully registered with podnet-server!");
         tracing::info!("PodNet Server Public Key: {}", server_info.public_key);
         Ok(())
     } else {
-        let status = response.status();
-        let error_text = response.text().await?;
+        let status = registration_response.status();
+        let error_text = registration_response.text().await?;
 
         if status == reqwest::StatusCode::CONFLICT {
             tracing::info!("✓ Identity server already registered with podnet-server");
@@ -384,12 +516,11 @@ async fn main() -> anyhow::Result<()> {
         server_id: server_id.clone(),
         server_secret_key: Arc::new(server_secret_key),
         server_public_key,
-        pending_challenges: Arc::new(Mutex::new(HashMap::new())),
     };
 
     let app = Router::new()
         .route("/", get(root))
-        .route("/challenge", post(request_challenge))
+        .route("/user/challenge", post(request_user_challenge))
         .route("/identity", post(issue_identity))
         .layer(CorsLayer::permissive())
         .with_state(state);
@@ -398,9 +529,9 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3001").await?;
     tracing::info!("Identity server running on http://localhost:3001");
     tracing::info!("Available endpoints:");
-    tracing::info!("  GET  /           - Server info");
-    tracing::info!("  POST /challenge  - Request challenge for identity");
-    tracing::info!("  POST /identity   - Submit challenge response, get identity pod");
+    tracing::info!("  GET  /                - Server info");
+    tracing::info!("  POST /user/challenge  - Request challenge for user identity");
+    tracing::info!("  POST /identity        - Submit challenge response, get identity pod");
 
     axum::serve(listener, app).await?;
     Ok(())

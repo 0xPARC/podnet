@@ -128,24 +128,46 @@ pub struct IdentityServer {
     pub id: Option<i64>,
     pub server_id: String,
     pub public_key: String,       // Stored as string in DB
-    pub registration_pod: String, // Complete signed pod as JSON string
+    pub challenge_pod: String,    // Server's challenge pod as JSON string
+    pub identity_pod: String,     // Identity server's response pod as JSON string
     pub created_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
+pub struct IdentityServerChallengeRequest {
+    /// Request from identity server to get a challenge for registration
+    pub server_id: String,
+    pub public_key: PublicKey,
+}
+
+#[derive(Debug, Serialize)]
+pub struct IdentityServerChallengeResponse {
+    /// SignedPod containing challenge information from main server:
+    /// - challenge: String (random challenge value)
+    /// - expires_at: String (ISO timestamp when challenge expires)
+    /// - identity_server_public_key: Point (public key from request)
+    /// - server_id: String (server ID from request)
+    /// - _signer: Point (main server's public key, automatically added by SignedPod)
+    pub challenge_pod: SignedPod,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct IdentityServerRegistration {
-    /// SignedPod containing identity server registration information:
-    /// - challenge: String (challenge sent by podnet-server)
-    /// - server_id: String (unique identifier for this identity server)
-    /// - public_key: Point (identity server's public key)
-    /// - _signer: Point (same as public_key, automatically added by SignedPod)
+    /// Registration request containing both server's challenge and identity server's response
+    /// 
+    /// server_challenge_pod contains:
+    /// - challenge: String (original challenge from server)
+    /// - expires_at: String (expiration timestamp)
+    /// - identity_server_public_key: Point (identity server's public key)
+    /// - server_id: String (identity server ID)
+    /// - _signer: Point (main server's public key)
     ///
-    /// This pod proves:
-    /// - The identity server controls the claimed public key
-    /// - The identity server received and acknowledged the server's challenge
-    /// - The registration request is authentic and cannot be replayed
-    /// - The identity server commits to the provided server_id
-    pub challenge_response: SignedPod,
+    /// identity_response_pod contains:
+    /// - challenge: String (same challenge value, proving identity server received it)
+    /// - server_id: String (confirming identity server ID)
+    /// - _signer: Point (identity server's public key, proving control of private key)
+    pub server_challenge_pod: SignedPod,
+    pub identity_response_pod: SignedPod,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

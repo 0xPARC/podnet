@@ -3,41 +3,23 @@ use axum::{
     http::StatusCode,
     response::Json,
 };
-use std::sync::Arc;
-use pod2::middleware::Hash;
 use pod_utils::ValueExt;
+use pod2::middleware::Hash;
 use podnet_models::{UpvoteRequest, get_upvote_verification_predicate};
+use std::sync::Arc;
 
 pub async fn upvote_document(
     Path(document_id): Path<i64>,
     State(state): State<Arc<crate::AppState>>,
     Json(payload): Json<UpvoteRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    use pod2::backends::plonky2::{
-        basetypes::DEFAULT_VD_SET, mainpod::Prover, mock::mainpod::MockProver,
-    };
     use pod2::lang::parse;
-    use pod2::middleware::{Params, PodProver, Statement};
+    use pod2::middleware::Statement;
 
     log::info!("Processing upvote for document {document_id} with main pod verification");
 
-    let mut params = Params::default();
-    params.max_custom_batch_size = 6;
-
-    // Choose prover based on mock flag
-    let mock_prover = MockProver {};
-    let real_prover = Prover {};
-    let use_mock = true;
-    let (vd_set, prover): (_, &dyn PodProver) = if use_mock {
-        println!("Using MockMainPod for upvote verification");
-        (
-            &pod2::middleware::VDSet::new(8, &[]).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-            &mock_prover,
-        )
-    } else {
-        println!("Using MainPod for upvote verification");
-        (&*DEFAULT_VD_SET, &real_prover)
-    };
+    let params = state.pod_config.get_params();
+    let (_vd_set, _prover) = state.pod_config.get_prover_setup()?;
 
     // Verify main pod proof
     log::info!("Verifying upvote main pod proof");
@@ -237,11 +219,9 @@ pub async fn upvote_document(
 pub async fn generate_base_case_upvote_pod(
     state: Arc<crate::AppState>,
     document_id: i64,
-    content_hash: &Hash,
-    post_id: i64,
+    _content_hash: &Hash,
+    _post_id: i64,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use pod2::backends::plonky2::mainpod::Prover;
-    use pod2::backends::plonky2::mock::mainpod::MockProver;
     use pod2::frontend::MainPodBuilder;
     use pod2::op;
 
@@ -252,29 +232,14 @@ pub async fn generate_base_case_upvote_pod(
 
     // Get predicate batch and parameters (similar to existing code)
     let predicate_str = podnet_models::get_upvote_verification_predicate();
-    let mut params = pod2::middleware::Params::default();
-    params.max_custom_batch_size = 6; // Set appropriate batch size
+    let params = state.pod_config.get_params();
     let batch = pod2::lang::parse(&predicate_str, &params, &[])
         .map_err(|e| format!("Failed to parse predicate: {}", e))?;
 
-    // Choose prover based on mock flag
-    let mock_prover = MockProver {};
-    let real_prover = Prover {};
-    let use_mock = true;
-    let (vd_set, prover): (_, &dyn pod2::middleware::PodProver) = if use_mock {
-        log::info!("Using MockMainPod for base case upvote verification");
-        (
-            &pod2::middleware::VDSet::new(8, &[])
-                .map_err(|e| format!("Failed to create VDSet: {}", e))?,
-            &mock_prover,
-        )
-    } else {
-        log::info!("Using MainPod for base case upvote verification");
-        (
-            &*pod2::backends::plonky2::basetypes::DEFAULT_VD_SET,
-            &real_prover,
-        )
-    };
+    let (vd_set, prover) = state
+        .pod_config
+        .get_prover_setup()
+        .map_err(|e| format!("Failed to get prover setup: {:?}", e))?;
 
     let upvote_count_base = batch
         .custom_batch
@@ -293,7 +258,7 @@ pub async fn generate_base_case_upvote_pod(
     let equals_zero_stmt = base_builder.priv_op(op!(eq, 0, 0))?;
     let upvote_count_base_stmt =
         base_builder.priv_op(op!(custom, upvote_count_base.clone(), equals_zero_stmt))?;
-    let count_stmt = base_builder.pub_op(op!(
+    let _count_stmt = base_builder.pub_op(op!(
         custom,
         upvote_count.clone(),
         upvote_count_base_stmt.clone(),
@@ -301,7 +266,7 @@ pub async fn generate_base_case_upvote_pod(
     ))?;
 
     // Generate the proof
-    let main_pod = base_builder.prove(prover, &params)?;
+    let main_pod = base_builder.prove(&*prover, &params)?;
     main_pod.pod.verify()?;
     log::info!(
         "✓ Successfully proved upvote_count(0) for document {}",
@@ -332,8 +297,6 @@ async fn generate_inductive_upvote_pod(
     post_id: i64,
     current_count: i64,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use pod2::backends::plonky2::mainpod::Prover;
-    use pod2::backends::plonky2::mock::mainpod::MockProver;
     use pod2::frontend::MainPodBuilder;
     use pod2::op;
 
@@ -375,29 +338,14 @@ async fn generate_inductive_upvote_pod(
 
     // Get predicate batch and parameters
     let predicate_str = podnet_models::get_upvote_verification_predicate();
-    let mut params = pod2::middleware::Params::default();
-    params.max_custom_batch_size = 6; // Set appropriate batch size
+    let params = state.pod_config.get_params();
     let batch = pod2::lang::parse(&predicate_str, &params, &[])
         .map_err(|e| format!("Failed to parse predicate: {}", e))?;
 
-    // Choose prover based on mock flag
-    let mock_prover = MockProver {};
-    let real_prover = Prover {};
-    let use_mock = true;
-    let (vd_set, prover): (_, &dyn pod2::middleware::PodProver) = if use_mock {
-        log::info!("Using MockMainPod for inductive upvote verification");
-        (
-            &pod2::middleware::VDSet::new(8, &[])
-                .map_err(|e| format!("Failed to create VDSet: {}", e))?,
-            &mock_prover,
-        )
-    } else {
-        log::info!("Using MainPod for inductive upvote verification");
-        (
-            &*pod2::backends::plonky2::basetypes::DEFAULT_VD_SET,
-            &real_prover,
-        )
-    };
+    let (vd_set, prover) = state
+        .pod_config
+        .get_prover_setup()
+        .map_err(|e| format!("Failed to get prover setup: {:?}", e))?;
 
     let upvote_count_ind = batch
         .custom_batch
@@ -438,7 +386,7 @@ async fn generate_inductive_upvote_pod(
     ))?;
 
     // Create the public upvote_count statement
-    let count_stmt = ind_builder.pub_op(op!(
+    let _count_stmt = ind_builder.pub_op(op!(
         custom,
         upvote_count.clone(),
         ind_count_stmt.clone(),
@@ -446,7 +394,7 @@ async fn generate_inductive_upvote_pod(
     ))?;
 
     // Generate the proof
-    let main_pod = ind_builder.prove(prover, &params)?;
+    let main_pod = ind_builder.prove(&*prover, &params)?;
     main_pod.pod.verify()?;
     log::info!(
         "✓ Successfully proved upvote_count({}) for document {}",
@@ -471,3 +419,4 @@ async fn generate_inductive_upvote_pod(
 
     Ok(())
 }
+
