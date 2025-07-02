@@ -1,7 +1,7 @@
 use pod2::backends::plonky2::primitives::ec::curve::Point as PublicKey;
 use pod2::frontend::MainPod;
 use pod2::middleware::{
-    KEY_SIGNER, KEY_TYPE, PodId, PodType, RawValue, TypedValue, Value, containers::Array,
+    Hash, KEY_SIGNER, KEY_TYPE, PodId, PodType, RawValue, TypedValue, Value, containers::Array,
     containers::Dictionary, containers::Set,
 };
 
@@ -16,6 +16,7 @@ pub trait ValueExt {
     fn as_array(&self) -> Option<&Array>;
     fn as_raw(&self) -> Option<&RawValue>;
     fn as_pod_id(&self) -> Option<&PodId>;
+    fn as_hash(&self) -> Option<Hash>;
 }
 
 impl ValueExt for Value {
@@ -78,6 +79,13 @@ impl ValueExt for Value {
     fn as_pod_id(&self) -> Option<&PodId> {
         match self.typed() {
             TypedValue::PodId(id) => Some(id),
+            _ => None,
+        }
+    }
+
+    fn as_hash(&self) -> Option<Hash> {
+        match self.typed() {
+            TypedValue::Raw(raw) => Some(Hash::from(*raw)),
             _ => None,
         }
     }

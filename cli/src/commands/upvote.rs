@@ -1,4 +1,5 @@
 use chrono::Utc;
+use hex::FromHex;
 use num_bigint::BigUint;
 use pod_utils::ValueExt;
 use pod2::backends::plonky2::primitives::ec::schnorr::SecretKey;
@@ -7,7 +8,7 @@ use pod2::backends::plonky2::{
 };
 use pod2::frontend::{MainPod, MainPodBuilder, SignedPod, SignedPodBuilder};
 use pod2::lang::parse;
-use pod2::middleware::{KEY_SIGNER, KEY_TYPE, Params, PodProver, PodType};
+use pod2::middleware::{Hash, KEY_SIGNER, KEY_TYPE, Params, PodProver, PodType};
 use pod2::op;
 use podnet_models::get_upvote_verification_predicate;
 use reqwest::StatusCode;
@@ -52,7 +53,8 @@ pub async fn upvote_document(
     let content_hash = document
         .pointer("/metadata/content_id")
         .and_then(|v| v.as_str())
-        .ok_or("Document missing metadata.content_id field")?;
+        .map(|v| Hash::from_hex(v))
+        .ok_or_else(|| "Document missing metadata.content_id field")??;
 
     let post_id = document
         .pointer("/metadata/post_id")
@@ -122,7 +124,7 @@ pub async fn upvote_document(
         &identity_pod,
         &upvote_pod,
         identity_server_pk,
-        content_hash,
+        &content_hash,
         post_id,
         use_mock,
     )?;
@@ -172,7 +174,7 @@ fn create_upvote_verification_main_pod(
     identity_pod: &pod2::frontend::SignedPod,
     upvote_pod: &pod2::frontend::SignedPod,
     identity_server_public_key: pod2::middleware::Value,
-    content_hash: &str,
+    content_hash: &Hash,
     post_id: i64,
     use_mock: bool,
 ) -> Result<MainPod, Box<dyn std::error::Error>> {
@@ -250,7 +252,7 @@ fn create_upvote_verification_main_pod(
     let _upvote_signer_check =
         upvote_builder.priv_op(op!(eq, (upvote_pod, KEY_SIGNER), user_public_key))?;
     let upvote_content_check =
-        upvote_builder.priv_op(op!(eq, (upvote_pod, "content_hash"), content_hash))?;
+        upvote_builder.priv_op(op!(eq, (upvote_pod, "content_hash"), *content_hash))?;
     let upvote_post_id_check = upvote_builder.priv_op(op!(eq, (upvote_pod, "post_id"), post_id))?;
     let upvote_request_type_check =
         upvote_builder.priv_op(op!(eq, (upvote_pod, "request_type"), "upvote"))?;

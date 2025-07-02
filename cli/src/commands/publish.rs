@@ -4,19 +4,21 @@ use plonky2::field::types::{Field, PrimeField64};
 use plonky2::hash::poseidon::PoseidonHash;
 use plonky2::plonk::config::Hasher;
 use pod_utils::ValueExt;
-use podnet_models::get_publish_verification_predicate;
 use pod2::backends::plonky2::primitives::ec::schnorr::SecretKey;
 use pod2::backends::plonky2::{
     basetypes::DEFAULT_VD_SET, mainpod::Prover, mock::mainpod::MockProver, signedpod::Signer,
 };
 use pod2::frontend::{MainPod, MainPodBuilder, SignedPod, SignedPodBuilder};
 use pod2::lang::parse;
-use pod2::middleware::{KEY_SIGNER, KEY_TYPE, Params, PodProver, PodType, Value};
+use pod2::middleware::{
+    Hash, KEY_SIGNER, KEY_TYPE, Params, PodProver, PodType, Value, hash_values,
+};
 use pod2::op;
+use podnet_models::get_publish_verification_predicate;
 use std::fs::File;
 use std::io::Write;
 
-use crate::conversion::{detect_format, convert_to_markdown, DocumentFormat};
+use crate::conversion::{DocumentFormat, convert_to_markdown, detect_format};
 use crate::utils::handle_error_response;
 
 pub async fn publish_content(
@@ -30,7 +32,7 @@ pub async fn publish_content(
     use_mock: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("Publishing content to server using main pod verification...");
-    
+
     // Step 1: Determine document format
     let detected_format = if let Some(format_str) = format_override {
         DocumentFormat::from_str(format_str)
@@ -38,14 +40,15 @@ pub async fn publish_content(
     } else {
         detect_format(content, file_path.map(|s| s.as_str()))
     };
-    
+
     println!("Detected format: {:?}", detected_format);
-    
+
     // Step 2: Convert to Markdown only if necessary
     let markdown_content = if detected_format != DocumentFormat::Markdown {
         let converted = convert_to_markdown(content, &detected_format)?;
         println!("✓ Content converted from {:?} to Markdown", detected_format);
-        println!("Converted content preview: {}", 
+        println!(
+            "Converted content preview: {}",
             if converted.len() > 200 {
                 format!("{}...", &converted[0..200])
             } else {
@@ -57,7 +60,7 @@ pub async fn publish_content(
         println!("Content is already in Markdown format");
         content.to_string()
     };
-    
+
     // Use the converted markdown content for the rest of the process
     let content = &markdown_content;
 
@@ -70,31 +73,7 @@ pub async fn publish_content(
     identity_pod.verify()?;
     println!("✓ Identity pod verification successful");
 
-    // Calculate content hash (same as server)
-    let bytes = content.as_bytes();
-    let mut inputs = Vec::new();
-
-    // Process bytes in chunks of 8 (64-bit field elements)
-    for chunk in bytes.chunks(8) {
-        let mut padded = [0u8; 8];
-        padded[..chunk.len()].copy_from_slice(chunk);
-        let value = u64::from_le_bytes(padded);
-        inputs.push(GoldilocksField::from_canonical_u64(value));
-    }
-
-    // Pad to multiple of 4 for Poseidon (if needed)
-    while inputs.len() % 4 != 0 {
-        inputs.push(GoldilocksField::ZERO);
-    }
-
-    let hash_result = PoseidonHash::hash_no_pad(&inputs);
-    // Convert full hash result to bytes (all 4 elements)
-    let mut hash_bytes = Vec::new();
-    for element in hash_result.elements {
-        hash_bytes.extend_from_slice(&element.to_canonical_u64().to_le_bytes());
-    }
-    let content_hash = hex::encode(hash_bytes);
-
+    let content_hash = hash_values(&[Value::from(content.clone())]);
     // Load keypair from file
     let file = File::open(keypair_file)?;
     let keypair_data: serde_json::Value = serde_json::from_reader(file)?;
@@ -115,7 +94,7 @@ pub async fn publish_content(
     let mut document_builder = SignedPodBuilder::new(&params);
 
     document_builder.insert("request_type", "publish");
-    document_builder.insert("content_hash", content_hash.as_str());
+    document_builder.insert("content_hash", content_hash);
     document_builder.insert("timestamp", chrono::Utc::now().timestamp());
 
     // Add post_id to the pod if provided (for adding revision to existing post)
@@ -142,9 +121,8 @@ pub async fn publish_content(
 
     let verified_content_hash = document_pod
         .get("content_hash")
-        .and_then(|v| v.as_str())
-        .ok_or("Document pod missing content_hash")?
-        .to_string();
+        .and_then(|v| v.as_hash())
+        .ok_or("Document pod missing content_hash")?;
 
     println!("Username: {}", username);
 
@@ -203,7 +181,7 @@ fn create_publish_verification_main_pod(
     identity_pod: &pod2::frontend::SignedPod,
     document_pod: &pod2::frontend::SignedPod,
     identity_server_public_key: pod2::middleware::Value,
-    content_hash: &str,
+    content_hash: &Hash,
     use_mock: bool,
 ) -> Result<MainPod, Box<dyn std::error::Error>> {
     let params = Params::default();
@@ -283,7 +261,7 @@ fn create_publish_verification_main_pod(
     let _document_signer_check =
         document_builder.priv_op(op!(eq, (document_pod, KEY_SIGNER), user_public_key))?;
     let document_content_check =
-        document_builder.priv_op(op!(eq, (document_pod, "content_hash"), content_hash))?;
+        document_builder.priv_op(op!(eq, (document_pod, "content_hash"), *content_hash))?;
 
     // Create document verification statement (public)
     let document_verification = document_builder.pub_op(op!(

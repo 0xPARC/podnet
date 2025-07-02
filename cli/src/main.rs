@@ -6,6 +6,7 @@ mod verification;
 
 use clap::{Arg, Command};
 use num_bigint::BigUint;
+use hex::ToHex;
 use plonky2::field::goldilocks_field::GoldilocksField;
 use plonky2::field::types::{Field, PrimeField64};
 use plonky2::hash::poseidon::PoseidonHash;
@@ -874,9 +875,10 @@ async fn view_post_in_browser(
         ));
     }
 
+    let content_id_hex: String = latest_doc.2.encode_hex();
     let full_html = create_enhanced_html_document_with_author(
         post_id,
-        &latest_doc.2,       // content_id
+        &content_id_hex,       // content_id
         &latest_doc.3,       // created_at
         &latest_doc.4,       // username
         &embedded_documents, // all documents embedded

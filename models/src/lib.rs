@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use pod2::backends::plonky2::primitives::ec::curve::Point as PublicKey;
 use pod2::frontend::{MainPod, SignedPod};
-use pod2::middleware::{KEY_SIGNER, KEY_TYPE, PodType};
+use pod2::middleware::{Hash, KEY_SIGNER, KEY_TYPE, PodType};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Post {
@@ -18,9 +18,9 @@ pub struct RawDocument {
     pub post_id: i64,
     pub revision: i64,
     pub created_at: Option<String>,
-    pub pod: String,           // JSON string of the signed pod
-    pub timestamp_pod: String, // JSON string of the server timestamp pod
-    pub user_id: String,       // Username of the author
+    pub pod: String,                      // JSON string of the signed pod
+    pub timestamp_pod: String,            // JSON string of the server timestamp pod
+    pub user_id: String,                  // Username of the author
     pub upvote_count_pod: Option<String>, // JSON string of the upvote count main pod
 }
 
@@ -35,7 +35,7 @@ pub struct PostWithDocuments {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DocumentMetadata {
     pub id: Option<i64>,
-    pub content_id: String,
+    pub content_id: Hash,
     pub post_id: i64,
     pub revision: i64,
     pub created_at: Option<String>,
@@ -301,11 +301,12 @@ pub fn get_upvote_verification_predicate() -> String {
 pub mod mainpod {
     use pod_utils::ValueExt;
     use pod2::frontend::MainPod;
+    use pod2::middleware::Hash;
 
     /// Verify main pod signature and public statements for publish verification
     pub fn verify_publish_verification_main_pod(
         main_pod: &MainPod,
-        expected_content_hash: &str,
+        expected_content_hash: &Hash,
         expected_username: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
         use pod2::backends::plonky2::{
@@ -352,7 +353,7 @@ pub mod mainpod {
             .as_str()
             .ok_or("publish_verification predicate missing username argument")?;
         let content_hash = publish_verification_args[1]
-            .as_str()
+            .as_hash()
             .ok_or("publish_verification predicate missing content_hash argument")?;
         let _identity_server_pk = publish_verification_args[2]
             .as_public_key()
@@ -367,7 +368,7 @@ pub mod mainpod {
             .into());
         }
 
-        if content_hash != expected_content_hash {
+        if &content_hash != expected_content_hash {
             return Err(format!(
                 "Content hash mismatch: expected {}, got {}",
                 expected_content_hash, content_hash

@@ -1,4 +1,6 @@
+use hex::{FromHex, ToHex};
 use pod2::frontend::{MainPod, SignedPod};
+use pod2::middleware::Hash;
 use podnet_models::{Document, DocumentMetadata, IdentityServer, Post, RawDocument, Upvote, User};
 use rusqlite::{Connection, OptionalExtension, Result};
 use std::sync::Mutex;
@@ -144,7 +146,7 @@ impl Database {
     // Document methods
     pub fn create_document(
         &self,
-        content_id: &str,
+        content_id: &Hash,
         post_id: i64,
         pod: &MainPod,
         user_id: &str,
@@ -164,11 +166,13 @@ impl Database {
         let pod_json = serde_json::to_string(pod)
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
+        let content_id_string: String = content_id.encode_hex();
+
         // Insert document with empty timestamp_pod and null upvote_count_pod initially
         tx.execute(
             "INSERT INTO documents (content_id, post_id, revision, pod, timestamp_pod, user_id, upvote_count_pod) VALUES (?1, ?2, ?3, ?4, '', ?5, NULL)",
             rusqlite::params![
-                content_id,
+                content_id_string,
                 post_id,
                 next_revision,
                 pod_json,
@@ -224,7 +228,7 @@ impl Database {
         // Create the metadata with properly typed pods
         let metadata = DocumentMetadata {
             id: Some(document_id),
-            content_id: content_id.to_string(),
+            content_id: *content_id,
             post_id,
             revision: next_revision,
             created_at: None, // Will be filled by database
@@ -548,9 +552,17 @@ impl Database {
             .map(|id| self.get_upvote_count(id).unwrap_or(0))
             .unwrap_or(0);
 
+        let content_id = Hash::from_hex(raw_doc.content_id).map_err(|_| {
+            rusqlite::Error::InvalidColumnType(
+                0,
+                "content".to_string(),
+                rusqlite::types::Type::Text,
+            )
+        })?;
+
         Ok(DocumentMetadata {
             id: raw_doc.id,
-            content_id: raw_doc.content_id,
+            content_id,
             post_id: raw_doc.post_id,
             revision: raw_doc.revision,
             created_at: raw_doc.created_at,
@@ -579,10 +591,17 @@ impl Database {
         match self.get_raw_document(id)? {
             Some(raw_doc) => {
                 let metadata = self.raw_document_to_metadata(raw_doc.clone())?;
+                let content_hash = Hash::from_hex(raw_doc.content_id).map_err(|_| {
+                    rusqlite::Error::InvalidColumnType(
+                        0,
+                        "content_id".to_string(),
+                        rusqlite::types::Type::Text,
+                    )
+                })?;
 
                 // Retrieve content from storage
                 let content = storage
-                    .retrieve(&raw_doc.content_id)
+                    .retrieve(&content_hash)
                     .map_err(|_| {
                         rusqlite::Error::InvalidColumnType(
                             0,
@@ -654,7 +673,7 @@ impl Database {
             [document_id],
             |row| row.get::<_, Option<String>>(0),
         );
-        
+
         match result {
             Ok(pod) => Ok(pod),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),

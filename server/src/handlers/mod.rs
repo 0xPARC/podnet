@@ -3,11 +3,12 @@ use axum::{
     http::StatusCode,
     response::Json,
 };
+use hex::ToHex;
 use pulldown_cmark::{Event, Options, Parser, html};
 use std::sync::Arc;
 
 use pod2::frontend::{MainPod, MainPodBuilder, SignedPod, SignedPodBuilder};
-use pod2::middleware::KEY_TYPE;
+use pod2::middleware::Hash;
 use pod2::op;
 
 use pod_utils::ValueExt;
@@ -249,7 +250,7 @@ pub async fn publish_document(
         log::error!("publish_verification predicate missing username argument");
         StatusCode::BAD_REQUEST
     })?;
-    let content_hash = publish_verification_args[1].as_str().ok_or_else(|| {
+    let content_hash = publish_verification_args[1].as_hash().ok_or_else(|| {
         log::error!("publish_verification predicate missing content_hash argument");
         StatusCode::BAD_REQUEST
     })?;
@@ -376,7 +377,8 @@ pub async fn publish_document(
 
         tokio::spawn(async move {
             if let Err(e) =
-                generate_base_case_upvote_pod(state_clone, document_id, content_hash, post_id).await
+                generate_base_case_upvote_pod(state_clone, document_id, &content_hash, post_id)
+                    .await
             {
                 log::error!(
                     "Failed to generate base case upvote count pod for document {}: {}",
@@ -574,7 +576,7 @@ pub async fn upvote_document(
             StatusCode::BAD_REQUEST
         })?
         .to_string();
-    let content_hash = upvote_verification_args[1].as_str().ok_or_else(|| {
+    let content_hash = upvote_verification_args[1].as_hash().ok_or_else(|| {
         log::error!("upvote_verification predicate missing content_hash argument");
         StatusCode::BAD_REQUEST
     })?;
@@ -700,13 +702,13 @@ pub async fn upvote_document(
     // Spawn background task to generate inductive upvote count pod
     let state_clone = state.clone();
     let doc_id = document_id;
-    let hash = content_hash.to_string();
+    let hash = content_hash;
     let p_id = post_id;
     let current_count = upvote_count;
 
     tokio::spawn(async move {
         if let Err(e) =
-            generate_inductive_upvote_pod(state_clone, doc_id, hash, p_id, current_count).await
+            generate_inductive_upvote_pod(state_clone, doc_id, &hash, p_id, current_count).await
         {
             log::error!(
                 "Failed to generate inductive upvote count pod for document {}: {}",
@@ -727,7 +729,7 @@ pub async fn upvote_document(
 async fn generate_base_case_upvote_pod(
     state: Arc<crate::AppState>,
     document_id: i64,
-    content_hash: String,
+    content_hash: &Hash,
     post_id: i64,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use pod2::backends::plonky2::mainpod::Prover;
@@ -818,7 +820,7 @@ async fn generate_base_case_upvote_pod(
 async fn generate_inductive_upvote_pod(
     state: Arc<crate::AppState>,
     document_id: i64,
-    content_hash: String,
+    content_hash: &Hash,
     post_id: i64,
     current_count: i64,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -848,13 +850,8 @@ async fn generate_inductive_upvote_pod(
                 document_id
             );
             // If no previous pod exists, generate base case first
-            generate_base_case_upvote_pod(
-                state.clone(),
-                document_id,
-                content_hash.clone(),
-                post_id,
-            )
-            .await?;
+            generate_base_case_upvote_pod(state.clone(), document_id, content_hash, post_id)
+                .await?;
 
             // Then get the newly created base case pod
             let base_pod_json = state
