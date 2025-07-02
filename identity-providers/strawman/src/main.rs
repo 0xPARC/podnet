@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::sync::{Arc, Mutex};
 use tower_http::cors::CorsLayer;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 // Identity server state
 pub struct IdentityServerState {
@@ -111,7 +112,7 @@ async fn request_challenge(
     State(state): State<IdentityServerState>,
     Json(payload): Json<ChallengeRequest>,
 ) -> Result<Json<ChallengeResponse>, StatusCode> {
-    log::info!("Challenge requested for username: {}", payload.username);
+    tracing::info!("Challenge requested for username: {}", payload.username);
 
     // Generate a random challenge
     let challenge: String = (0..32)
@@ -128,7 +129,7 @@ async fn request_challenge(
         );
     }
 
-    log::info!(
+    tracing::info!(
         "Generated challenge for {}: {}",
         payload.username,
         challenge
@@ -148,7 +149,7 @@ async fn issue_identity(
 ) -> Result<Json<IdentityResponse>, StatusCode> {
     // Verify the challenge response pod
     payload.challenge_response.verify().map_err(|e| {
-        log::error!("Failed to verify challenge response pod: {e}");
+        tracing::error!("Failed to verify challenge response pod: {e}");
         StatusCode::BAD_REQUEST
     })?;
 
@@ -159,7 +160,7 @@ async fn issue_identity(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .ok_or_else(|| {
-            log::error!("Challenge response pod missing challenge");
+            tracing::error!("Challenge response pod missing challenge");
             StatusCode::BAD_REQUEST
         })?;
 
@@ -169,7 +170,7 @@ async fn issue_identity(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .ok_or_else(|| {
-            log::error!("Challenge response pod missing username");
+            tracing::error!("Challenge response pod missing username");
             StatusCode::BAD_REQUEST
         })?;
 
@@ -180,7 +181,7 @@ async fn issue_identity(
         .and_then(|v| v.as_public_key())
         .copied()
         .ok_or_else(|| {
-            log::error!("Challenge response pod missing signer");
+            tracing::error!("Challenge response pod missing signer");
             StatusCode::BAD_REQUEST
         })?;
 
@@ -188,14 +189,14 @@ async fn issue_identity(
     let expected_user_info = {
         let mut pending = state.pending_challenges.lock().unwrap();
         pending.remove(&challenge).ok_or_else(|| {
-            log::error!("Invalid or expired challenge: {}", challenge);
+            tracing::error!("Invalid or expired challenge: {}", challenge);
             StatusCode::BAD_REQUEST
         })?
     };
 
     // Verify the username and public key match what was requested
     if expected_user_info.0 != username {
-        log::error!(
+        tracing::error!(
             "Username mismatch: expected {}, got {}",
             expected_user_info.0,
             username
@@ -205,11 +206,11 @@ async fn issue_identity(
 
     // Compare public keys directly
     if expected_user_info.1 != user_public_key {
-        log::error!("Public key mismatch for user {}", username);
+        tracing::error!("Public key mismatch for user {}", username);
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    log::info!("Challenge verification successful for user: {}", username);
+    tracing::info!("Challenge verification successful for user: {}", username);
 
     // Create identity pod using SignedPodBuilder
     let params = Params::default();
@@ -223,11 +224,11 @@ async fn issue_identity(
     // Sign the identity pod with the identity server's key
     let mut server_signer = Signer(SecretKey(state.server_secret_key.0.clone()));
     let identity_pod = identity_builder.sign(&mut server_signer).map_err(|e| {
-        log::error!("Failed to sign identity pod: {e}");
+        tracing::error!("Failed to sign identity pod: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    log::info!("Identity pod issued for user: {}", username);
+    tracing::info!("Identity pod issued for user: {}", username);
 
     Ok(Json(IdentityResponse { identity_pod }))
 }
@@ -238,11 +239,11 @@ async fn register_with_podnet_server(
     secret_key: &SecretKey,
     podnet_server_url: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    log::info!("Registering with podnet-server at: {}", podnet_server_url);
+    tracing::info!("Registering with podnet-server at: {}", podnet_server_url);
 
     // First, generate a mock challenge (in a real implementation, this would come from the podnet-server)
     let challenge = format!("challenge_{}", chrono::Utc::now().timestamp());
-    log::info!("Using challenge: {}", challenge);
+    tracing::info!("Using challenge: {}", challenge);
 
     // Create challenge response pod
     let params = Params::default();
@@ -270,19 +271,19 @@ async fn register_with_podnet_server(
 
     if response.status().is_success() {
         let server_info: PodNetServerInfo = response.json().await?;
-        log::info!("✓ Successfully registered with podnet-server!");
-        log::info!("PodNet Server Public Key: {}", server_info.public_key);
+        tracing::info!("✓ Successfully registered with podnet-server!");
+        tracing::info!("PodNet Server Public Key: {}", server_info.public_key);
         Ok(())
     } else {
         let status = response.status();
         let error_text = response.text().await?;
 
         if status == reqwest::StatusCode::CONFLICT {
-            log::info!("✓ Identity server already registered with podnet-server");
+            tracing::info!("✓ Identity server already registered with podnet-server");
             Ok(())
         } else {
-            log::error!("Failed to register with podnet-server. Status: {}", status);
-            log::error!("Error: {}", error_text);
+            tracing::error!("Failed to register with podnet-server. Status: {}", status);
+            tracing::error!("Error: {}", error_text);
             Err(format!("Registration failed: {} - {}", status, error_text).into())
         }
     }
@@ -293,7 +294,7 @@ fn load_or_create_keypair(keypair_file: &str) -> anyhow::Result<(String, SecretK
     let server_id = "strawman-identity-server".to_string();
 
     if fs::metadata(keypair_file).is_ok() {
-        log::info!("Loading existing keypair from: {}", keypair_file);
+        tracing::info!("Loading existing keypair from: {}", keypair_file);
         let keypair_json = fs::read_to_string(keypair_file)?;
         let keypair: IdentityServerKeypair = serde_json::from_str(&keypair_json)?;
 
@@ -317,12 +318,12 @@ fn load_or_create_keypair(keypair_file: &str) -> anyhow::Result<(String, SecretK
             return Err(anyhow::anyhow!("Keypair public key mismatch"));
         }
 
-        log::info!("✓ Keypair loaded successfully");
-        log::info!("Created at: {}", keypair.created_at);
+        tracing::info!("✓ Keypair loaded successfully");
+        tracing::info!("Created at: {}", keypair.created_at);
 
         Ok((server_id, secret_key, keypair.public_key))
     } else {
-        log::info!("Creating new keypair and saving to: {}", keypair_file);
+        tracing::info!("Creating new keypair and saving to: {}", keypair_file);
 
         // Generate new keypair
         let secret_key = SecretKey::new_rand();
@@ -339,7 +340,7 @@ fn load_or_create_keypair(keypair_file: &str) -> anyhow::Result<(String, SecretK
         let keypair_json = serde_json::to_string_pretty(&keypair)?;
         fs::write(keypair_file, keypair_json)?;
 
-        log::info!("✓ New keypair created and saved");
+        tracing::info!("✓ New keypair created and saved");
 
         Ok((server_id, secret_key, public_key))
     }
@@ -347,9 +348,15 @@ fn load_or_create_keypair(keypair_file: &str) -> anyhow::Result<(String, SecretK
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    env_logger::init();
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "podnet_ident_strawman=debug,tower_http=debug,axum::routing=trace".into()),
+        )
+        .with(tracing_subscriber::fmt::layer())
+        .init();
 
-    log::info!("Starting PodNet Identity Server (Strawman Implementation)...");
+    tracing::info!("Starting PodNet Identity Server (Strawman Implementation)...");
 
     // Load or create server keypair
     let keypair_file = std::env::var("IDENTITY_KEYPAIR_FILE")
@@ -357,20 +364,20 @@ async fn main() -> anyhow::Result<()> {
 
     let (server_id, server_secret_key, server_public_key) = load_or_create_keypair(&keypair_file)?;
 
-    log::info!("Identity Server ID: {}", server_id);
-    log::info!("Server Public Key: {}", server_public_key);
+    tracing::info!("Identity Server ID: {}", server_id);
+    tracing::info!("Server Public Key: {}", server_public_key);
 
     // Attempt to register with podnet-server
     let podnet_server_url =
         std::env::var("PODNET_SERVER_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
 
-    log::info!("Attempting to register with podnet-server...");
+    tracing::info!("Attempting to register with podnet-server...");
     if let Err(e) =
         register_with_podnet_server(&server_id, &server_secret_key, &podnet_server_url).await
     {
-        log::warn!("Failed to register with podnet-server: {}", e);
-        log::warn!("Identity server will continue running, but won't be registered.");
-        log::warn!("Issued identity pods may not be accepted by podnet-server.");
+        tracing::warn!("Failed to register with podnet-server: {}", e);
+        tracing::warn!("Identity server will continue running, but won't be registered.");
+        tracing::warn!("Issued identity pods may not be accepted by podnet-server.");
     }
 
     let state = IdentityServerState {
@@ -387,13 +394,13 @@ async fn main() -> anyhow::Result<()> {
         .layer(CorsLayer::permissive())
         .with_state(state);
 
-    log::info!("Binding to 0.0.0.0:3001...");
+    tracing::info!("Binding to 0.0.0.0:3001...");
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3001").await?;
-    log::info!("Identity server running on http://localhost:3001");
-    log::info!("Available endpoints:");
-    log::info!("  GET  /           - Server info");
-    log::info!("  POST /challenge  - Request challenge for identity");
-    log::info!("  POST /identity   - Submit challenge response, get identity pod");
+    tracing::info!("Identity server running on http://localhost:3001");
+    tracing::info!("Available endpoints:");
+    tracing::info!("  GET  /           - Server info");
+    tracing::info!("  POST /challenge  - Request challenge for identity");
+    tracing::info!("  POST /identity   - Submit challenge response, get identity pod");
 
     axum::serve(listener, app).await?;
     Ok(())

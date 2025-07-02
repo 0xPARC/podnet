@@ -28,15 +28,15 @@ fn load_or_generate_server_key() -> SecretKey {
         // Load existing key
         if let Ok(key_data) = fs::read_to_string(key_path) {
             if let Some(key_bigint) = BigUint::parse_bytes(key_data.trim().as_bytes(), 10) {
-                log::info!("Loaded existing server key from {key_path}");
+                tracing::info!("Loaded existing server key from {key_path}");
                 return SecretKey(key_bigint);
             }
         }
-        log::warn!("Failed to load server key from {key_path}, generating new one");
+        tracing::warn!("Failed to load server key from {key_path}, generating new one");
     }
 
     // Generate new key
-    log::info!("Generating new server key");
+    tracing::info!("Generating new server key");
     let seed = b"podnet_server_timestamp_key_v1";
     let mut seed_bytes = [0u8; 32];
     seed_bytes[..seed.len().min(32)].copy_from_slice(&seed[..seed.len().min(32)]);
@@ -45,9 +45,9 @@ fn load_or_generate_server_key() -> SecretKey {
 
     // Save the key
     if let Err(e) = fs::write(key_path, secret_key.0.to_string()) {
-        log::error!("Failed to save server key to {key_path}: {e}");
+        tracing::error!("Failed to save server key to {key_path}: {e}");
     } else {
-        log::info!("Saved server key to {key_path}");
+        tracing::info!("Saved server key to {key_path}");
     }
 
     secret_key
@@ -58,14 +58,14 @@ pub fn create_timestamp_pod_for_main_pod(
     post_id: i64,
     document_id: i64,
 ) -> Result<SignedPod, Box<dyn std::error::Error + Send + Sync>> {
-    log::info!("Creating timestamp pod for main pod");
+    tracing::info!("Creating timestamp pod for main pod");
 
     let params = Params::default();
     let server_sk = get_server_secret_key();
 
     // Create timestamp pod signed by server
     let timestamp = Utc::now().to_rfc3339();
-    log::info!("Creating timestamp pod with timestamp: {timestamp}");
+    tracing::info!("Creating timestamp pod with timestamp: {timestamp}");
 
     let mut timestamp_builder = SignedPodBuilder::new(&params);
     timestamp_builder.insert("main-pod-id", main_pod.id());
@@ -77,7 +77,7 @@ pub fn create_timestamp_pod_for_main_pod(
     let timestamp_pod = timestamp_builder.sign(&mut server_signer)?;
     timestamp_pod.verify()?;
 
-    log::info!("Timestamp pod for main pod created and verified");
+    tracing::info!("Timestamp pod for main pod created and verified");
 
     Ok(timestamp_pod)
 }

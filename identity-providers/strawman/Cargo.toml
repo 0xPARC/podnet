@@ -19,6 +19,7 @@ num-bigint.workspace = true
 
 # Strawman-specific dependencies
 axum = "0.7"
-env_logger = "0.10"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tower-http = { version = "0.5", features = ["cors"] }
 rand = "0.9.1"

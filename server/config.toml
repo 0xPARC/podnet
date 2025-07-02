@@ -1,0 +1,5 @@
+# PodNet Server Configuration
+
+# Whether to use mock proofs instead of real ZK proofs
+# Set to true for faster development, false for production
+mock_proofs = false

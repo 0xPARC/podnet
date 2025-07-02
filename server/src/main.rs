@@ -1,3 +1,4 @@
+mod config;
 mod db;
 mod handlers;
 mod pod;
@@ -9,29 +10,41 @@ use axum::{
 };
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 pub struct AppState {
     pub db: Arc<db::Database>,
     pub storage: Arc<storage::ContentAddressedStorage>,
+    pub config: config::ServerConfig,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    env_logger::init();
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "podnet_server=debug,tower_http=debug,axum::routing=trace".into()),
+        )
+        .with(tracing_subscriber::fmt::layer())
+        .init();
 
-    log::info!("Starting PodNet Server...");
+    tracing::info!("Starting PodNet Server...");
 
-    log::info!("Initializing database...");
+    // Load configuration
+    let config = config::ServerConfig::load();
+    tracing::info!("Configuration loaded: mock_proofs = {}", config.mock_proofs);
+
+    tracing::info!("Initializing database...");
     let db = Arc::new(db::Database::new("app.db").await?);
-    log::info!("Database initialized successfully");
+    tracing::info!("Database initialized successfully");
 
-    log::info!("Initializing content storage...");
+    tracing::info!("Initializing content storage...");
     let storage = Arc::new(storage::ContentAddressedStorage::new("content")?);
-    log::info!("Content storage initialized successfully");
+    tracing::info!("Content storage initialized successfully");
 
-    let state = Arc::new(AppState { db, storage });
+    let state = Arc::new(AppState { db, storage, config });
 
-    log::info!("Setting up routes...");
+    tracing::info!("Setting up routes...");
     let app = Router::new()
         .route("/", get(handlers::root))
         // Post routes
@@ -58,20 +71,20 @@ async fn main() -> anyhow::Result<()> {
         .layer(CorsLayer::permissive())
         .with_state(state);
 
-    log::info!("Binding to 0.0.0.0:3000...");
+    tracing::info!("Binding to 0.0.0.0:3000...");
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
-    log::info!("Server running on http://localhost:3000");
-    log::info!("Available endpoints:");
-    log::info!("  GET  /                       - Root endpoint");
-    log::info!("  GET  /posts                  - List all posts");
-    log::info!("  GET  /posts/:id              - Get post with documents");
-    log::info!("  GET  /documents              - List all documents");
-    log::info!("  GET  /documents/:id          - Get specific document");
-    log::info!("  GET  /documents/:id/render   - Get rendered document HTML");
-    log::info!("  POST /publish                - Publish new document");
-    log::info!("  POST /register               - Register user with public key");
-    log::info!("  POST /identity/register      - Register identity server");
-    log::info!("  POST /documents/:id/upvote   - Upvote a document");
+    tracing::info!("Server running on http://localhost:3000");
+    tracing::info!("Available endpoints:");
+    tracing::info!("  GET  /                       - Root endpoint");
+    tracing::info!("  GET  /posts                  - List all posts");
+    tracing::info!("  GET  /posts/:id              - Get post with documents");
+    tracing::info!("  GET  /documents              - List all documents");
+    tracing::info!("  GET  /documents/:id          - Get specific document");
+    tracing::info!("  GET  /documents/:id/render   - Get rendered document HTML");
+    tracing::info!("  POST /publish                - Publish new document");
+    tracing::info!("  POST /register               - Register user with public key");
+    tracing::info!("  POST /identity/register      - Register identity server");
+    tracing::info!("  POST /documents/:id/upvote   - Upvote a document");
 
     axum::serve(listener, app).await?;
     Ok(())
