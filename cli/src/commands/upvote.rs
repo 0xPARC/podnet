@@ -5,11 +5,9 @@ use pod_utils::ValueExt;
 use pod_utils::prover_setup::PodNetProverSetup;
 use pod2::backends::plonky2::primitives::ec::schnorr::SecretKey;
 use pod2::backends::plonky2::signedpod::Signer;
-use pod2::frontend::{MainPod, MainPodBuilder, SignedPod, SignedPodBuilder};
-use pod2::lang::parse;
-use pod2::middleware::{Hash, KEY_SIGNER, KEY_TYPE, PodType};
-use pod2::op;
-use podnet_models::get_upvote_verification_predicate;
+use pod2::frontend::{SignedPod, SignedPodBuilder};
+use pod2::middleware::{Hash, KEY_SIGNER};
+use podnet_models::mainpod::upvote::{prove_upvote_verification, UpvoteProofParams};
 use reqwest::StatusCode;
 use std::fs::File;
 
@@ -116,13 +114,15 @@ pub async fn upvote_document(
         .clone();
 
     // Create main pod that proves both identity and upvote verification
-    let main_pod = create_upvote_verification_main_pod(
-        &identity_pod,
-        &upvote_pod,
-        identity_server_pk,
-        &content_hash,
-        use_mock,
-    )?;
+    let params = UpvoteProofParams {
+        identity_pod: &identity_pod,
+        upvote_pod: &upvote_pod,
+        identity_server_public_key: identity_server_pk,
+        content_hash: &content_hash,
+        use_mock_proofs: use_mock,
+    };
+    let main_pod = prove_upvote_verification(params)
+        .map_err(|e| format!("Failed to generate upvote verification MainPod: {}", e))?;
 
     println!("✓ Upvote main pod created and verified");
 
@@ -165,136 +165,3 @@ pub async fn upvote_document(
     Ok(())
 }
 
-fn create_upvote_verification_main_pod(
-    identity_pod: &pod2::frontend::SignedPod,
-    upvote_pod: &pod2::frontend::SignedPod,
-    identity_server_public_key: pod2::middleware::Value,
-    content_hash: &Hash,
-    use_mock: bool,
-) -> Result<MainPod, Box<dyn std::error::Error>> {
-    let params = PodNetProverSetup::get_params();
-    let (vd_set, prover) = PodNetProverSetup::create_prover_setup(use_mock)?;
-
-    // Extract username and user public key from identity pod
-    let username = identity_pod
-        .get("username")
-        .and_then(|v| v.as_str())
-        .ok_or("Identity pod missing username")?;
-
-    let user_public_key = identity_pod
-        .get("user_public_key")
-        .ok_or("Identity pod missing user_public_key")?;
-
-    // Get predicate definition from shared models
-    let predicate_input = get_upvote_verification_predicate();
-    println!("upvote predicate is: {predicate_input}");
-
-    println!("Parsing custom predicates...");
-    let batch = parse(&predicate_input, &params, &[])?.custom_batch;
-    let identity_verified_pred = batch.predicate_ref_by_name("identity_verified").unwrap();
-    let upvote_verified_pred = batch.predicate_ref_by_name("upvote_verified").unwrap();
-    let upvote_verification_pred = batch.predicate_ref_by_name("upvote_verification").unwrap();
-
-    // Step 1: Build identity verification main pod
-    println!("Building identity verification main pod...");
-    let mut identity_builder = MainPodBuilder::new(&params, vd_set);
-    identity_builder.add_signed_pod(identity_pod);
-
-    // Identity verification constraints (private operations)
-    let identity_type_check =
-        identity_builder.priv_op(op!(eq, (identity_pod, KEY_TYPE), PodType::Signed))?;
-    let _identity_signer_check = identity_builder.priv_op(op!(
-        eq,
-        (identity_pod, KEY_SIGNER),
-        identity_server_public_key.clone()
-    ))?;
-    let identity_username_check =
-        identity_builder.priv_op(op!(eq, (identity_pod, "username"), username))?;
-
-    // Create identity verification statement (public)
-    let identity_verification = identity_builder.pub_op(op!(
-        custom,
-        identity_verified_pred,
-        identity_type_check,
-        identity_username_check
-    ))?;
-
-    println!("Generating identity verification main pod proof...");
-    let identity_main_pod = identity_builder.prove(prover.as_ref(), &params)?;
-    identity_main_pod.pod.verify()?;
-    println!("✓ Identity verification main pod created and verified");
-
-    // Step 2: Build upvote verification main pod
-    println!("Building upvote verification main pod...");
-    let mut upvote_builder = MainPodBuilder::new(&params, vd_set);
-    upvote_builder.add_signed_pod(upvote_pod);
-
-    // Upvote verification constraints (private operations)
-    let upvote_type_check =
-        upvote_builder.priv_op(op!(eq, (upvote_pod, KEY_TYPE), PodType::Signed))?;
-    let _upvote_signer_check =
-        upvote_builder.priv_op(op!(eq, (upvote_pod, KEY_SIGNER), user_public_key))?;
-    let upvote_content_check =
-        upvote_builder.priv_op(op!(eq, (upvote_pod, "content_hash"), *content_hash))?;
-    let upvote_request_type_check =
-        upvote_builder.priv_op(op!(eq, (upvote_pod, "request_type"), "upvote"))?;
-
-    // Create upvote verification statement (public)
-    let upvote_verification = upvote_builder.pub_op(op!(
-        custom,
-        upvote_verified_pred,
-        upvote_type_check,
-        upvote_content_check,
-        upvote_request_type_check
-    ))?;
-
-    println!("Generating upvote verification main pod proof...");
-    let upvote_main_pod = upvote_builder.prove(prover.as_ref(), &params)?;
-    upvote_main_pod.pod.verify()?;
-    println!("✓ Upvote verification main pod created and verified");
-
-    // Step 3: Build final upvote verification main pod that combines the two
-    println!("Building final upvote verification main pod...");
-    let mut final_builder = MainPodBuilder::new(&params, vd_set);
-
-    // Add the identity and upvote main pods as recursive inputs
-    final_builder.add_recursive_pod(identity_main_pod);
-    final_builder.add_recursive_pod(upvote_main_pod);
-
-    // Add the original signed pods for cross-verification
-    final_builder.add_signed_pod(identity_pod);
-    final_builder.add_signed_pod(upvote_pod);
-
-    // Cross-verification constraints (private operations)
-    let identity_server_pk_check = final_builder.priv_op(op!(
-        eq,
-        (identity_pod, KEY_SIGNER),
-        identity_server_public_key.clone()
-    ))?;
-    let user_pk_check = final_builder.priv_op(op!(
-        eq,
-        (identity_pod, "user_public_key"),
-        (upvote_pod, KEY_SIGNER)
-    ))?;
-
-    // Create the unified upvote verification statement (public)
-    // This references the previous main pod proofs and adds cross-verification
-    let _upvote_verification = final_builder.pub_op(op!(
-        custom,
-        upvote_verification_pred,
-        identity_verification,
-        upvote_verification,
-        identity_server_pk_check,
-        user_pk_check
-    ))?;
-
-    // Generate the final main pod proof
-    println!("Generating final upvote verification main pod proof (this may take a while)...");
-    let main_pod = final_builder.prove(prover.as_ref(), &params)?;
-
-    // Verify the main pod
-    main_pod.pod.verify()?;
-    println!("✓ Upvote main pod proof generated and verified");
-
-    Ok(main_pod)
-}

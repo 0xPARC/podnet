@@ -20,7 +20,7 @@ use pod2::lang::parse;
 use pod2::middleware::{Params, PodProver, PodType, KEY_SIGNER, KEY_TYPE};
 use pod2::op;
 use pod_utils::ValueExt;
-use podnet_models::{get_publish_verification_predicate, mainpod::verify_publish_verification_main_pod};
+use podnet_models::{get_publish_verification_predicate, mainpod::publish::verify_publish_verification, mainpod::upvote_count::verify_upvote_count};
 use std::fs::File;
 
 use cli::*;
@@ -34,9 +34,18 @@ fn create_enhanced_html_document_with_author(
     content_id: &str,
     timestamp: &str,
     author: &str,
+    tags: &std::collections::HashSet<String>,
     html_content: &str,
     revision_links: &str,
 ) -> String {
+    // Format tags for display
+    let tags_display = if tags.is_empty() {
+        "None".to_string()
+    } else {
+        let tag_list: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
+        tag_list.join(", ")
+    };
+
     format!(
         r#"<!DOCTYPE html>
 <html lang="en">
@@ -240,6 +249,7 @@ MathJax = {{
                 <div><strong>Author:</strong> {author}</div>
                 <div><strong>Content Hash:</strong> <code>{content_id}</code></div>
                 <div><strong>Timestamp:</strong> {timestamp}</div>
+                <div><strong>Tags:</strong> {tags_display}</div>
             </div>
         </div>
         <div id="main-content" class="content">
@@ -283,6 +293,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .help("Use mock prover for faster development")
                         .long("mock")
                         .action(clap::ArgAction::SetTrue),
+                    Arg::new("tags")
+                        .help("Comma-separated list of tags for document organization")
+                        .short('t')
+                        .long("tags")
+                        .value_name("TAG1,TAG2,TAG3"),
                 ])
                 .args(content_args()),
         )
@@ -365,7 +380,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let post_id = sub_matches.get_one::<String>("post_id");
             let identity_pod_file = sub_matches.get_one::<String>("identity_pod").unwrap();
             let use_mock = sub_matches.get_flag("mock");
-            publish::publish_content(keypair_file, &content, file_path, format_override, server, post_id, identity_pod_file, use_mock).await?;
+            let tags = sub_matches.get_one::<String>("tags");
+            publish::publish_content(keypair_file, &content, file_path, format_override, server, post_id, identity_pod_file, use_mock, tags).await?;
         }
         Some(("get-post", sub_matches)) => {
             let post_id = sub_matches.get_one::<String>("post_id").unwrap();
@@ -373,14 +389,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             posts::get_post_by_id(post_id, server).await?;
         }
         Some(("get-document", sub_matches)) => {
-            let document_id = sub_matches.get_one::<String>("document_id").unwrap();
-            let server = sub_matches.get_one::<String>("server").unwrap();
-            documents::get_document_by_id(document_id, server).await?;
+            //let document_id = sub_matches.get_one::<String>("document_id").unwrap();
+            //let server = sub_matches.get_one::<String>("server").unwrap();
+            //documents::get_document_by_id(document_id, server).await?;
         }
         Some(("render", sub_matches)) => {
-            let document_id = sub_matches.get_one::<String>("document_id").unwrap();
-            let server = sub_matches.get_one::<String>("server").unwrap();
-            documents::render_document_by_id(document_id, server).await?;
+            //let document_id = sub_matches.get_one::<String>("document_id").unwrap();
+            //let server = sub_matches.get_one::<String>("server").unwrap();
+            //documents::render_document_by_id(document_id, server).await?;
         }
         Some(("view", sub_matches)) => {
             let post_id = sub_matches.get_one::<String>("post_id").unwrap();
@@ -766,11 +782,12 @@ async fn view_post_in_browser(
         let revision = document.metadata.revision;
         let username = document.metadata.user_id.clone();
         let upvote_count = document.metadata.upvote_count;
+        let tags = document.metadata.tags.clone();
 
         // Verify signatures (required)
         println!("Verifying signatures for revision {revision}...");
-        
-        verify_publish_verification_main_pod(&document.metadata.pod, &content_id, &username)?;
+        verify_publish_verification(&document.metadata.pod, &content_id, &username, post_id.parse()?, &tags)
+            .map_err(|e| format!("MainPod verification failed: {}", e))?;
         println!("Main pod: {}", document.metadata.pod);
         println!("✓ Main pod verification completed");
 
@@ -783,6 +800,16 @@ async fn view_post_in_browser(
             .map_err(|e| format!("Failed to serialize timestamp pod: {e}"))?;
         verify_timestamp_pod_signature(&timestamp_pod_json, &server_public_key)?;
 
+        // Verify upvote count pod if present (optional)
+        if let Some(upvote_count_pod) = &document.metadata.upvote_count_pod {
+            println!("Verifying upvote count pod...");
+            verify_upvote_count(upvote_count_pod, upvote_count, &content_id)
+                .map_err(|e| format!("Upvote count MainPod verification failed: {}", e))?;
+            println!("✓ Upvote count MainPod verification completed (count: {})", upvote_count);
+        } else if upvote_count > 0 {
+            println!("⚠️  Warning: Document claims {} upvotes but no upvote count proof provided", upvote_count);
+        }
+
         document_data.push((
             doc_id,
             revision,
@@ -791,6 +818,7 @@ async fn view_post_in_browser(
             username.to_string(),
             html_content.to_string(),
             upvote_count,
+            tags,
         ));
     }
 
@@ -807,7 +835,7 @@ async fn view_post_in_browser(
     let mut embedded_documents = String::new();
 
     if document_data.len() > 1 {
-        for (i, (doc_id, doc_revision, content_id, doc_created, username, html_content, upvote_count)) in
+        for (i, (doc_id, doc_revision, content_id, doc_created, username, html_content, upvote_count, tags)) in
             document_data.iter().enumerate()
         {
             let is_current = i == 0; // First item is the latest
@@ -837,7 +865,7 @@ async fn view_post_in_browser(
             ));
         }
     } else {
-        let (doc_id, doc_revision, content_id, doc_created, username, html_content, upvote_count) =
+        let (doc_id, doc_revision, content_id, doc_created, username, html_content, upvote_count, _tags) =
             &document_data[0];
         revision_links.push_str(&format!(
             r#"<div style="padding: 10px; color: #666; font-style: italic;">
@@ -859,6 +887,7 @@ async fn view_post_in_browser(
         &content_id_hex,       // content_id
         &latest_doc.3,       // created_at
         &latest_doc.4,       // username
+        &latest_doc.7,       // tags
         &embedded_documents, // all documents embedded
         &revision_links,
     );

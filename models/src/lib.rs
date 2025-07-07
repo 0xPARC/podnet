@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 use pod2::backends::plonky2::primitives::ec::curve::Point as PublicKey;
 use pod2::frontend::{MainPod, SignedPod};
@@ -22,6 +23,7 @@ pub struct RawDocument {
     pub timestamp_pod: String,            // JSON string of the server timestamp pod
     pub user_id: String,                  // Username of the author
     pub upvote_count_pod: Option<String>, // JSON string of the upvote count main pod
+    pub tags: HashSet<String>,            // Set of tags for document organization
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -66,6 +68,7 @@ pub struct DocumentMetadata {
     /// Proves: upvote_count(N, content_hash, post_id) where N is the actual count
     /// Uses recursive proofs starting from base case (count=0) and building up
     pub upvote_count_pod: Option<MainPod>,
+    pub tags: HashSet<String>, // Set of tags for document organization and discovery
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -77,6 +80,7 @@ pub struct Document {
 #[derive(Debug, Deserialize)]
 pub struct PublishRequest {
     pub content: String,
+    pub tags: HashSet<String>, // Set of tags for document organization
     /// MainPod that cryptographically proves the user's identity and document authenticity:
     ///
     /// Contains two inner pods:
@@ -214,17 +218,18 @@ pub fn get_publish_verification_predicate() -> String {
             Equal(?identity_pod["username"], ?username)
         )
 
-        document_verified(content_hash, private: document_pod) = AND(
+        document_verified(content_hash, post_id, tags, private: document_pod) = AND(
             Equal(?document_pod["{key_type}"], {signed_pod_type})
             Equal(?document_pod["content_hash"], ?content_hash)
+            Equal(?document_pod["tags"], ?tags)
+            Equal(?document_pod["post_id"], ?post_id)
         )
 
-        publish_verification(username, content_hash, identity_server_pk, post_id, private: identity_pod, document_pod) = AND(
+        publish_verification(username, content_hash, identity_server_pk, post_id, tags, private: identity_pod, document_pod) = AND(
             identity_verified(?username)
-            document_verified(?content_hash)
+            document_verified(?content_hash, ?post_id, ?tags)
             Equal(?identity_pod["{key_signer}"], ?identity_server_pk)
             Equal(?identity_pod["user_public_key"], ?document_pod["{key_signer}"]) 
-            Equal(?document_pod["post_id"], ?post_id)
         )
         "#,
         key_type = KEY_TYPE,
@@ -320,82 +325,52 @@ pub fn get_upvote_verification_predicate() -> String {
     )
 }
 
-/// Main pod verification utilities
-pub mod mainpod {
-    use pod_utils::ValueExt;
-    use pod2::frontend::MainPod;
-    use pod2::middleware::Hash;
+/// Shared predicate definitions for upvote count verification  
+pub fn get_upvote_count_predicate() -> String {
+    format!(
+        r#"
+        identity_verified(username, private: identity_pod) = AND(
+            Equal(?identity_pod["{key_type}"], {signed_pod_type})
+            Equal(?identity_pod["username"], ?username)
+        )
 
-    /// Verify main pod signature and public statements for publish verification
-    pub fn verify_publish_verification_main_pod(
-        main_pod: &MainPod,
-        expected_content_hash: &Hash,
-        expected_username: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        use pod_utils::prover_setup::PodNetProverSetup;
-        use pod2::lang::parse;
-        use pod2::middleware::Statement;
+        upvote_verified(content_hash, private: upvote_pod) = AND(
+            Equal(?upvote_pod["{key_type}"], {signed_pod_type})
+            Equal(?upvote_pod["content_hash"], ?content_hash)
+            Equal(?upvote_pod["request_type"], "upvote")
+        )
 
-        // Verify main pod proof
-        main_pod.pod.verify()?;
+        upvote_verification(username, content_hash, identity_server_pk, private: identity_pod, upvote_pod) = AND(
+            identity_verified(?username)
+            upvote_verified(?content_hash)
+            Equal(?identity_pod["{key_signer}"], ?identity_server_pk)
+            Equal(?identity_pod["user_public_key"], ?upvote_pod["{key_signer}"])
+        )
 
-        // Verify the main pod contains the expected public statements
-        let params = PodNetProverSetup::get_params();
+        upvote_count_base(count, content_hash, private: data_pod) = AND(
+            Equal(?count, 0)
+            Equal(?data_pod["content_hash"], ?content_hash)
+        )
 
-        // Get predicate definition from shared models
-        let predicate_input = super::get_publish_verification_predicate();
+        upvote_count_ind(count, content_hash, private: intermed, username, identity_server_pk) = AND(
+            upvote_count(?intermed, ?content_hash)
+            SumOf(?count, ?intermed, 1)
+            upvote_verification(?username, ?content_hash, ?identity_server_pk)
+        )
 
-        let batch = parse(&predicate_input, &params, &[])?.custom_batch;
-        let publish_verification_pred = batch
-            .predicate_ref_by_name("publish_verification")
-            .ok_or("Failed to find publish_verification predicate")?;
-
-        println!("GOT MAIN POD OF: {:?}", main_pod.public_statements);
-        let publish_verification_args = main_pod
-            .public_statements
-            .iter()
-            .find_map(|v| {
-                println!(
-                    "GOT V: {v:?}\n\n want {publish_verification_pred:?}\n\n\n"
-                );
-                match v {
-                    Statement::Custom(pred, args) if *pred == publish_verification_pred => {
-                        Some(args)
-                    }
-                    _ => None,
-                }
-            })
-            .ok_or("Main pod public statements missing publish_verification predicate")?;
-
-        // Extract and verify public data
-        let username = publish_verification_args[0]
-            .as_str()
-            .ok_or("publish_verification predicate missing username argument")?;
-        let content_hash = publish_verification_args[1]
-            .as_hash()
-            .ok_or("publish_verification predicate missing content_hash argument")?;
-        let _identity_server_pk = publish_verification_args[2]
-            .as_public_key()
-            .ok_or("publish_verification predicate missing identity_server_pk argument")?;
-
-        // Verify extracted data matches expected values
-        if username != expected_username {
-            return Err(format!(
-                "Username mismatch: expected {expected_username}, got {username}"
-            )
-            .into());
-        }
-
-        if &content_hash != expected_content_hash {
-            return Err(format!(
-                "Content hash mismatch: expected {expected_content_hash}, got {content_hash}"
-            )
-            .into());
-        }
-
-        Ok(())
-    }
+        upvote_count(count, content_hash) = OR(
+            upvote_count_base(?count, ?content_hash)
+            upvote_count_ind(?count, ?content_hash)
+        )
+        "#,
+        key_type = KEY_TYPE,
+        key_signer = KEY_SIGNER,
+        signed_pod_type = PodType::Signed as usize,
+    )
 }
+
+/// Main pod operations and verification utilities
+pub mod mainpod;
 
 #[cfg(test)]
 mod tests {

@@ -3,13 +3,10 @@ use pod_utils::ValueExt;
 use pod_utils::prover_setup::PodNetProverSetup;
 use pod2::backends::plonky2::primitives::ec::schnorr::SecretKey;
 use pod2::backends::plonky2::signedpod::Signer;
-use pod2::frontend::{MainPod, MainPodBuilder, SignedPod, SignedPodBuilder};
-use pod2::lang::parse;
-use pod2::middleware::{
-    Hash, KEY_SIGNER, KEY_TYPE, PodType, Value, hash_values,
-};
-use pod2::op;
-use podnet_models::get_publish_verification_predicate;
+use pod2::frontend::{SignedPod, SignedPodBuilder};
+use pod2::middleware::{Hash, KEY_SIGNER, KEY_TYPE, Value, containers::Set, hash_values};
+use podnet_models::mainpod::publish::{PublishProofParams, prove_publish_verification};
+use std::collections::HashSet;
 use std::fs::File;
 
 use crate::conversion::{DocumentFormat, convert_to_markdown, detect_format};
@@ -24,6 +21,7 @@ pub async fn publish_content(
     post_id: Option<&String>,
     identity_pod_file: &str,
     use_mock: bool,
+    tags: Option<&String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("Publishing content to server using main pod verification...");
 
@@ -55,6 +53,28 @@ pub async fn publish_content(
         content.to_string()
     };
 
+    // Step 3: Process tags
+    let document_tags: HashSet<String> = if let Some(tags_str) = tags {
+        tags_str
+            .split(',')
+            .map(|tag| tag.trim().to_string())
+            .filter(|tag| !tag.is_empty())
+            .collect()
+    } else {
+        HashSet::new()
+    };
+
+    if !document_tags.is_empty() {
+        println!(
+            "Tags: {}",
+            document_tags
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+
     // Use the converted markdown content for the rest of the process
     let content = &markdown_content;
 
@@ -82,14 +102,23 @@ pub async fn publish_content(
     println!("Using keypair: {}", keypair_data["name"]);
     println!("Public key: {}", keypair_data["public_key"]);
     println!("Content hash: {content_hash}");
+    println!("Tags: {document_tags:?}");
 
-    // Create document pod with content hash, timestamp, and optional post_id
+    // Create document pod with content hash, timestamp, tags, and optional post_id
     let params = PodNetProverSetup::get_params();
     let mut document_builder = SignedPodBuilder::new(&params);
 
     document_builder.insert("request_type", "publish");
     document_builder.insert("content_hash", content_hash);
     document_builder.insert("timestamp", chrono::Utc::now().timestamp());
+    let tag_set = Set::new(
+        5, // TODO: put this configuration somewhere global
+        document_tags
+            .iter()
+            .map(|v| Value::from(v.clone()))
+            .collect(),
+    )?;
+    document_builder.insert("tags", tag_set);
 
     // Add post_id to the pod if provided (for adding revision to existing post)
     if let Some(id) = post_id {
@@ -127,13 +156,15 @@ pub async fn publish_content(
         .clone();
 
     // Create main pod that proves both identity and document verification
-    let main_pod = create_publish_verification_main_pod(
-        &identity_pod,
-        &document_pod,
-        identity_server_pk,
-        &verified_content_hash,
-        use_mock,
-    )?;
+    let params = PublishProofParams {
+        identity_pod: &identity_pod,
+        document_pod: &document_pod,
+        identity_server_public_key: identity_server_pk,
+        content_hash: &verified_content_hash,
+        use_mock_proofs: use_mock,
+    };
+    let main_pod = prove_publish_verification(params)
+        .map_err(|e| format!("Failed to generate publish verification MainPod: {}", e))?;
 
     println!("✓ Main pod created and verified");
 
@@ -141,6 +172,7 @@ pub async fn publish_content(
     // Create the publish request with main pod
     let payload = serde_json::json!({
         "content": content,
+        "tags": document_tags,
         "main_pod": main_pod
     });
     println!("Main pod is: {}", &main_pod);
@@ -169,141 +201,4 @@ pub async fn publish_content(
     }
 
     Ok(())
-}
-
-fn create_publish_verification_main_pod(
-    identity_pod: &pod2::frontend::SignedPod,
-    document_pod: &pod2::frontend::SignedPod,
-    identity_server_public_key: pod2::middleware::Value,
-    content_hash: &Hash,
-    use_mock: bool,
-) -> Result<MainPod, Box<dyn std::error::Error>> {
-    let params = PodNetProverSetup::get_params();
-    let (vd_set, prover) = PodNetProverSetup::create_prover_setup(use_mock)?;
-
-    // Extract username and user public key from identity pod
-    let username = identity_pod
-        .get("username")
-        .and_then(|v| v.as_str())
-        .ok_or("Identity pod missing username")?;
-
-    let user_public_key = identity_pod
-        .get("user_public_key")
-        .ok_or("Identity pod missing user_public_key")?;
-
-    let post_id = document_pod
-        .get("post_id")
-        .ok_or("Document pod missing post_id")?;
-
-    // Get predicate definition from shared pod-utils
-    let predicate_input = get_publish_verification_predicate();
-    println!("predicate is: {predicate_input}");
-
-    println!("Parsing custom predicates...");
-    let batch = parse(&predicate_input, &params, &[])?.custom_batch;
-    let identity_verified_pred = batch.predicate_ref_by_name("identity_verified").unwrap();
-    let document_verified_pred = batch.predicate_ref_by_name("document_verified").unwrap();
-    let publish_verification_pred = batch.predicate_ref_by_name("publish_verification").unwrap();
-
-    // Step 1: Build identity verification main pod
-    println!("Building identity verification main pod...");
-    let mut identity_builder = MainPodBuilder::new(&params, vd_set);
-    identity_builder.add_signed_pod(identity_pod);
-
-    // Identity verification constraints (private operations)
-    let identity_type_check =
-        identity_builder.priv_op(op!(eq, (identity_pod, KEY_TYPE), PodType::Signed))?;
-    let _identity_signer_check = identity_builder.priv_op(op!(
-        eq,
-        (identity_pod, KEY_SIGNER),
-        identity_server_public_key.clone()
-    ))?;
-    let identity_username_check =
-        identity_builder.priv_op(op!(eq, (identity_pod, "username"), username))?;
-
-    // Create identity verification statement (public)
-    let identity_verification = identity_builder.pub_op(op!(
-        custom,
-        identity_verified_pred,
-        identity_type_check,
-        identity_username_check
-    ))?;
-
-    println!("Generating identity verification main pod proof...");
-    let identity_main_pod = identity_builder.prove(prover.as_ref(), &params)?;
-    identity_main_pod.pod.verify()?;
-    println!("✓ Identity verification main pod created and verified");
-
-    // Step 2: Build document verification main pod
-    println!("Building document verification main pod...");
-    let mut document_builder = MainPodBuilder::new(&params, vd_set);
-    document_builder.add_signed_pod(document_pod);
-
-    // Document verification constraints (private operations)
-    let document_type_check =
-        document_builder.priv_op(op!(eq, (document_pod, KEY_TYPE), PodType::Signed))?;
-    let _document_signer_check =
-        document_builder.priv_op(op!(eq, (document_pod, KEY_SIGNER), user_public_key))?;
-    let document_content_check =
-        document_builder.priv_op(op!(eq, (document_pod, "content_hash"), *content_hash))?;
-
-    // Create document verification statement (public)
-    let document_verification = document_builder.pub_op(op!(
-        custom,
-        document_verified_pred,
-        document_type_check,
-        document_content_check
-    ))?;
-
-    println!("Generating document verification main pod proof...");
-    let document_main_pod = document_builder.prove(prover.as_ref(), &params)?;
-    document_main_pod.pod.verify()?;
-    println!("✓ Document verification main pod created and verified");
-
-    // Step 3: Build final publish verification main pod that combines the two
-    println!("Building final publish verification main pod...");
-    let mut final_builder = MainPodBuilder::new(&params, vd_set);
-
-    // Add the identity and document main pods as recursive inputs
-    final_builder.add_recursive_pod(identity_main_pod);
-    final_builder.add_recursive_pod(document_main_pod);
-
-    // Add the original signed pods for cross-verification
-    final_builder.add_signed_pod(identity_pod);
-    final_builder.add_signed_pod(document_pod);
-
-    // Cross-verification constraints (private operations)
-    let identity_server_pk_check = final_builder.priv_op(op!(
-        eq,
-        (identity_pod, KEY_SIGNER),
-        identity_server_public_key.clone()
-    ))?;
-    let user_pk_check = final_builder.priv_op(op!(
-        eq,
-        (identity_pod, "user_public_key"),
-        (document_pod, KEY_SIGNER)
-    ))?;
-    let post_id_check = final_builder.priv_op(op!(eq, (document_pod, "post_id"), post_id))?;
-
-    // Create the unified publish verification statement (public)
-    // This references the previous main pod proofs and adds cross-verification
-    let _publish_verification = final_builder.pub_op(op!(
-        custom,
-        publish_verification_pred,
-        identity_verification,
-        document_verification,
-        identity_server_pk_check,
-        user_pk_check,
-        post_id_check
-    ))?;
-
-    // Generate the final main pod proof
-    println!("Generating final publish verification main pod proof (this may take a while)...");
-    let main_pod = final_builder.prove(prover.as_ref(), &params)?;
-
-    // Verify the main pod
-    main_pod.pod.verify()?;
-    println!("✓ Main pod proof generated and verified");
-
-    Ok(main_pod)
 }

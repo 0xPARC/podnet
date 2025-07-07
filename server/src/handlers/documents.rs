@@ -256,6 +256,7 @@ pub async fn publish_document(
             final_post_id,
             &payload.main_pod,
             username,
+            &payload.tags,
             &state.storage,
         )
         .map_err(|e| {

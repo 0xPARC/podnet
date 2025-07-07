@@ -1,66 +1,110 @@
-use crate::utils::{
-    extract_document_metadata, handle_error_response, truncate_pod_json,
-};
+use crate::utils::{extract_document_metadata, handle_error_response, truncate_pod_json};
+use pod2::middleware::Hash;
+use podnet_models::mainpod::upvote_count::verify_upvote_count;
 
-pub async fn get_document_by_id(
-    document_id: &str,
-    server_url: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let client = reqwest::Client::new();
-    let response = client
-        .get(format!("{server_url}/documents/{document_id}"))
-        .send()
-        .await?;
-
-    if response.status().is_success() {
-        let document: serde_json::Value = response.json().await?;
-
-        if let Some(content) = document.get("content").and_then(|v| v.as_str()) {
-            let (content_id, created_at, post_id, revision) = extract_document_metadata(&document);
-            let upvote_count = document.pointer("/metadata/upvote_count").and_then(|v| v.as_i64()).unwrap_or(0);
-            print_document_metadata(&content_id, &created_at, post_id, revision, upvote_count);
-            println!("Content:\n{content}");
-        } else {
-            println!("No content found for document ID: {document_id}");
-        }
-    } else {
-        let status = response.status();
-        let error_text = response.text().await?;
-        handle_error_response(status, &error_text, "retrieve document");
-    }
-
-    Ok(())
-}
-
-pub async fn render_document_by_id(
-    document_id: &str,
-    server_url: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let client = reqwest::Client::new();
-    let response = client
-        .get(format!("{server_url}/documents/{document_id}/render"))
-        .send()
-        .await?;
-
-    if response.status().is_success() {
-        let document: serde_json::Value = response.json().await?;
-
-        if let Some(content) = document.get("content").and_then(|v| v.as_str()) {
-            let (content_id, created_at, post_id, revision) = extract_document_metadata(&document);
-            let upvote_count = document.pointer("/metadata/upvote_count").and_then(|v| v.as_i64()).unwrap_or(0);
-            print_document_metadata(&content_id, &created_at, post_id, revision, upvote_count);
-            println!("Rendered HTML:\n{content}");
-        } else {
-            println!("No content found for document ID: {document_id}");
-        }
-    } else {
-        let status = response.status();
-        let error_text = response.text().await?;
-        handle_error_response(status, &error_text, "render document");
-    }
-
-    Ok(())
-}
+//pub async fn get_document_by_id(
+//    document_id: &str,
+//    server_url: &str,
+//) -> Result<(), Box<dyn std::error::Error>> {
+//    let client = reqwest::Client::new();
+//    let response = client
+//        .get(format!("{server_url}/documents/{document_id}"))
+//        .send()
+//        .await?;
+//
+//    if response.status().is_success() {
+//        let document: serde_json::Value = response.json().await?;
+//
+//        if let Some(content) = document.get("content").and_then(|v| v.as_str()) {
+//            let (content_id, created_at, post_id, revision) = extract_document_metadata(&document);
+//            let upvote_count = document.pointer("/metadata/upvote_count").and_then(|v| v.as_i64()).unwrap_or(0);
+//
+//            // Verify upvote count pod if present
+//            if let Some(upvote_count_pod_json) = document.pointer("/metadata/upvote_count_pod") {
+//                match serde_json::from_value(upvote_count_pod_json.clone()) {
+//                    Ok(upvote_count_pod) => {
+//                        match verify_upvote_count(&upvote_count_pod, upvote_count, &content_id) {
+//                            Ok(()) => {
+//                                println!("✓ Upvote count verification successful (count: {})", upvote_count);
+//                            }
+//                            Err(e) => {
+//                                println!("⚠️  Upvote count verification failed: {}", e);
+//                            }
+//                        }
+//                    }
+//                    Err(e) => {
+//                        println!("⚠️  Failed to parse upvote count pod: {}", e);
+//                    }
+//                }
+//            } else if upvote_count > 0 {
+//                println!("⚠️  Warning: Document claims {} upvotes but no upvote count proof provided", upvote_count);
+//            }
+//
+//            print_document_metadata(&content_id, &created_at, post_id, revision, upvote_count);
+//            println!("Content:\n{content}");
+//        } else {
+//            println!("No content found for document ID: {document_id}");
+//        }
+//    } else {
+//        let status = response.status();
+//        let error_text = response.text().await?;
+//        handle_error_response(status, &error_text, "retrieve document");
+//    }
+//
+//    Ok(())
+//}
+//
+//pub async fn render_document_by_id(
+//    document_id: &str,
+//    server_url: &str,
+//) -> Result<(), Box<dyn std::error::Error>> {
+//    let client = reqwest::Client::new();
+//    let response = client
+//        .get(format!("{server_url}/documents/{document_id}/render"))
+//        .send()
+//        .await?;
+//
+//    if response.status().is_success() {
+//        let document: serde_json::Value = response.json().await?;
+//
+//        if let Some(content) = document.get("content").and_then(|v| v.as_str()) {
+//            let (content_id, created_at, post_id, revision) = extract_document_metadata(&document);
+//            let upvote_count = document.pointer("/metadata/upvote_count").and_then(|v| v.as_i64()).unwrap_or(0);
+//
+//            // Verify upvote count pod if present
+//            if let Some(upvote_count_pod_json) = document.pointer("/metadata/upvote_count_pod") {
+//                match serde_json::from_value(upvote_count_pod_json.clone()) {
+//                    Ok(upvote_count_pod) => {
+//                        match verify_upvote_count(&upvote_count_pod, upvote_count, &content_id) {
+//                            Ok(()) => {
+//                                println!("✓ Upvote count verification successful (count: {})", upvote_count);
+//                            }
+//                            Err(e) => {
+//                                println!("⚠️  Upvote count verification failed: {}", e);
+//                            }
+//                        }
+//                    }
+//                    Err(e) => {
+//                        println!("⚠️  Failed to parse upvote count pod: {}", e);
+//                    }
+//                }
+//            } else if upvote_count > 0 {
+//                println!("⚠️  Warning: Document claims {} upvotes but no upvote count proof provided", upvote_count);
+//            }
+//
+//            print_document_metadata(&content_id, &created_at, post_id, revision, upvote_count);
+//            println!("Rendered HTML:\n{content}");
+//        } else {
+//            println!("No content found for document ID: {document_id}");
+//        }
+//    } else {
+//        let status = response.status();
+//        let error_text = response.text().await?;
+//        handle_error_response(status, &error_text, "render document");
+//    }
+//
+//    Ok(())
+//}
 
 pub async fn list_documents(server_url: &str) -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
@@ -77,10 +121,18 @@ pub async fn list_documents(server_url: &str) -> Result<(), Box<dyn std::error::
 
             println!("Available documents:");
             println!(
-                "{:<6} {:<12} {:<8} {:<8} {:<20} {:<66} {:<52} {:<52}",
-                "ID", "Post", "Rev", "Upvotes", "Created", "Content Hash", "Main Pod", "Timestamp Pod"
+                "{:<6} {:<12} {:<8} {:<8} {:<20} {:<30} {:<66} {:<52} {:<52}",
+                "ID",
+                "Post",
+                "Rev",
+                "Upvotes",
+                "Created",
+                "Tags",
+                "Content Hash",
+                "Main Pod",
+                "Timestamp Pod"
             );
-            println!("{}", "-".repeat(258));
+            println!("{}", "-".repeat(288));
 
             for document in documents_array {
                 print_document_row(document);
@@ -101,7 +153,13 @@ pub async fn list_documents(server_url: &str) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-fn print_document_metadata(content_id: &str, created_at: &str, post_id: i64, revision: i64, upvote_count: i64) {
+fn print_document_metadata(
+    content_id: &str,
+    created_at: &str,
+    post_id: i64,
+    revision: i64,
+    upvote_count: i64,
+) {
     println!("Document Metadata:");
     println!("  Content ID: {content_id}");
     println!("  Post ID: {post_id}");
@@ -134,6 +192,30 @@ fn print_document_row(document: &serde_json::Value) {
         .and_then(|v| v.as_str())
         .unwrap_or("N/A");
 
+    // Extract and format tags
+    let tags = document
+        .get("tags")
+        .and_then(|v| v.as_array())
+        .map(|tags_array| {
+            let tag_strings: Vec<String> = tags_array
+                .iter()
+                .filter_map(|tag| tag.as_str().map(|s| s.to_string()))
+                .collect();
+            if tag_strings.is_empty() {
+                "".to_string()
+            } else {
+                tag_strings.join(", ")
+            }
+        })
+        .unwrap_or_else(|| "".to_string());
+
+    // Truncate tags for display (max 28 chars to fit in column)
+    let display_tags = if tags.len() > 28 {
+        format!("{}...", &tags[0..25])
+    } else {
+        tags
+    };
+
     // Truncate content_id for display
     let display_content_id = if content_id.len() > 64 {
         format!("{}...", &content_id[0..61])
@@ -152,15 +234,15 @@ fn print_document_row(document: &serde_json::Value) {
         .unwrap_or("N/A".to_string());
 
     println!(
-        "{:<6} {:<12} {:<8} {:<8} {:<20} {:<66} {:<52} {:<52}",
+        "{:<6} {:<12} {:<8} {:<8} {:<20} {:<30} {:<66} {:<52} {:<52}",
         id,
         post_id,
         revision,
         upvote_count,
         created_at,
+        display_tags,
         display_content_id,
         truncate_pod_json(&main_pod),
         truncate_pod_json(&timestamp_pod)
     );
 }
-
