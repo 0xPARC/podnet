@@ -1,13 +1,12 @@
 use num_bigint::BigUint;
 use pod_utils::ValueExt;
+use pod_utils::prover_setup::PodNetProverSetup;
 use pod2::backends::plonky2::primitives::ec::schnorr::SecretKey;
-use pod2::backends::plonky2::{
-    basetypes::DEFAULT_VD_SET, mainpod::Prover, mock::mainpod::MockProver, signedpod::Signer,
-};
+use pod2::backends::plonky2::signedpod::Signer;
 use pod2::frontend::{MainPod, MainPodBuilder, SignedPod, SignedPodBuilder};
 use pod2::lang::parse;
 use pod2::middleware::{
-    Hash, KEY_SIGNER, KEY_TYPE, Params, PodProver, PodType, Value, hash_values,
+    Hash, KEY_SIGNER, KEY_TYPE, PodType, Value, hash_values,
 };
 use pod2::op;
 use podnet_models::get_publish_verification_predicate;
@@ -85,7 +84,7 @@ pub async fn publish_content(
     println!("Content hash: {content_hash}");
 
     // Create document pod with content hash, timestamp, and optional post_id
-    let params = Params::default();
+    let params = PodNetProverSetup::get_params();
     let mut document_builder = SignedPodBuilder::new(&params);
 
     document_builder.insert("request_type", "publish");
@@ -179,19 +178,8 @@ fn create_publish_verification_main_pod(
     content_hash: &Hash,
     use_mock: bool,
 ) -> Result<MainPod, Box<dyn std::error::Error>> {
-    let mut params = Params::default();
-    params.max_custom_batch_size = 6;
-
-    // Choose prover based on mock flag
-    let mock_prover = MockProver {};
-    let real_prover = Prover {};
-    let (vd_set, prover): (_, &dyn PodProver) = if use_mock {
-        println!("Using MockMainPod for publish verification");
-        (&pod2::middleware::VDSet::new(8, &[])?, &mock_prover)
-    } else {
-        println!("Using MainPod for publish verification");
-        (&*DEFAULT_VD_SET, &real_prover)
-    };
+    let params = PodNetProverSetup::get_params();
+    let (vd_set, prover) = PodNetProverSetup::create_prover_setup(use_mock)?;
 
     // Extract username and user public key from identity pod
     let username = identity_pod
@@ -242,7 +230,7 @@ fn create_publish_verification_main_pod(
     ))?;
 
     println!("Generating identity verification main pod proof...");
-    let identity_main_pod = identity_builder.prove(prover, &params)?;
+    let identity_main_pod = identity_builder.prove(prover.as_ref(), &params)?;
     identity_main_pod.pod.verify()?;
     println!("✓ Identity verification main pod created and verified");
 
@@ -268,7 +256,7 @@ fn create_publish_verification_main_pod(
     ))?;
 
     println!("Generating document verification main pod proof...");
-    let document_main_pod = document_builder.prove(prover, &params)?;
+    let document_main_pod = document_builder.prove(prover.as_ref(), &params)?;
     document_main_pod.pod.verify()?;
     println!("✓ Document verification main pod created and verified");
 
@@ -311,7 +299,7 @@ fn create_publish_verification_main_pod(
 
     // Generate the final main pod proof
     println!("Generating final publish verification main pod proof (this may take a while)...");
-    let main_pod = final_builder.prove(prover, &params)?;
+    let main_pod = final_builder.prove(prover.as_ref(), &params)?;
 
     // Verify the main pod
     main_pod.pod.verify()?;

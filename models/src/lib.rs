@@ -332,28 +332,15 @@ pub mod mainpod {
         expected_content_hash: &Hash,
         expected_username: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        use pod2::backends::plonky2::{
-            basetypes::DEFAULT_VD_SET, mainpod::Prover, mock::mainpod::MockProver,
-        };
+        use pod_utils::prover_setup::PodNetProverSetup;
         use pod2::lang::parse;
-        use pod2::middleware::{Params, PodProver, Statement};
+        use pod2::middleware::Statement;
 
         // Verify main pod proof
         main_pod.pod.verify()?;
 
         // Verify the main pod contains the expected public statements
-        let mut params = Params::default();
-        params.max_custom_batch_size = 6;
-
-        // Choose prover based on mock flag (use same as server)
-        let mock_prover = MockProver {};
-        let real_prover = Prover {};
-        let use_mock = true;
-        let (_vd_set, _prover): (_, &dyn PodProver) = if use_mock {
-            (&pod2::middleware::VDSet::new(8, &[])?, &mock_prover)
-        } else {
-            (&*DEFAULT_VD_SET, &real_prover)
-        };
+        let params = PodNetProverSetup::get_params();
 
         // Get predicate definition from shared models
         let predicate_input = super::get_publish_verification_predicate();

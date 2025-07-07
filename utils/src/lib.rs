@@ -4,6 +4,8 @@ use pod2::middleware::{
     containers::Dictionary, containers::Set,
 };
 
+pub mod prover_setup;
+
 /// Utility trait for extracting typed values from pod2::middleware::Value
 pub trait ValueExt {
     fn as_i64(&self) -> Option<i64>;
