@@ -1,8 +1,8 @@
 //! Publish verification MainPod operations
 
 use super::{
-    MainPodError, MainPodResult, extract_post_id, extract_tags, extract_user_public_key,
-    extract_username, verify_mainpod_basics,
+    MainPodError, MainPodResult, extract_authors, extract_post_id, extract_tags,
+    extract_user_public_key, extract_username, verify_mainpod_basics,
 };
 use crate::get_publish_verification_predicate;
 use pod_utils::ValueExt;
@@ -40,6 +40,7 @@ pub fn prove_publish_verification(params: PublishProofParams) -> MainPodResult<M
     let user_public_key = extract_user_public_key(params.identity_pod)?;
     let post_id = extract_post_id(params.document_pod, "Document")?;
     let tags = extract_tags(params.document_pod, "Document")?;
+    let authors = extract_authors(params.document_pod, "Authors")?;
 
     // Parse predicates
     let predicate_input = get_publish_verification_predicate();
@@ -76,9 +77,7 @@ pub fn prove_publish_verification(params: PublishProofParams) -> MainPodResult<M
             (params.identity_pod, KEY_SIGNER),
             params.identity_server_public_key.clone()
         ))
-        .map_err(|e| {
-            MainPodError::ProofGeneration(format!("Identity signer check failed: {e}"))
-        })?;
+        .map_err(|e| MainPodError::ProofGeneration(format!("Identity signer check failed: {e}")))?;
     let identity_username_check = identity_builder
         .priv_op(op!(eq, (params.identity_pod, "username"), username))
         .map_err(|e| {
@@ -115,9 +114,7 @@ pub fn prove_publish_verification(params: PublishProofParams) -> MainPodResult<M
         .map_err(|e| MainPodError::ProofGeneration(format!("Document type check failed: {e}")))?;
     let _document_signer_check = document_builder
         .priv_op(op!(eq, (params.document_pod, KEY_SIGNER), user_public_key))
-        .map_err(|e| {
-            MainPodError::ProofGeneration(format!("Document signer check failed: {e}"))
-        })?;
+        .map_err(|e| MainPodError::ProofGeneration(format!("Document signer check failed: {e}")))?;
     let document_content_check = document_builder
         .priv_op(op!(
             eq,
@@ -130,6 +127,11 @@ pub fn prove_publish_verification(params: PublishProofParams) -> MainPodResult<M
     let document_tags_check = document_builder
         .priv_op(op!(eq, (params.document_pod, "tags"), tags))
         .map_err(|e| MainPodError::ProofGeneration(format!("Document tags check failed: {e}")))?;
+    let document_authors_check = document_builder
+        .priv_op(op!(eq, (params.document_pod, "authors"), authors))
+        .map_err(|e| {
+            MainPodError::ProofGeneration(format!("Document authors check failed: {e}"))
+        })?;
     let document_post_id_check = document_builder
         .priv_op(op!(eq, (params.document_pod, "post_id"), post_id))
         .map_err(|e| {
@@ -143,6 +145,7 @@ pub fn prove_publish_verification(params: PublishProofParams) -> MainPodResult<M
             document_type_check,
             document_content_check,
             document_tags_check,
+            document_authors_check,
             document_post_id_check
         ))
         .map_err(|e| {
@@ -182,9 +185,7 @@ pub fn prove_publish_verification(params: PublishProofParams) -> MainPodResult<M
             (params.identity_pod, "user_public_key"),
             (params.document_pod, KEY_SIGNER)
         ))
-        .map_err(|e| {
-            MainPodError::ProofGeneration(format!("Final user key check failed: {e}"))
-        })?;
+        .map_err(|e| MainPodError::ProofGeneration(format!("Final user key check failed: {e}")))?;
 
     let _publish_verification = final_builder
         .pub_op(op!(
@@ -316,4 +317,3 @@ mod tests {
 
     // Add unit tests for publish verification functions
 }
-

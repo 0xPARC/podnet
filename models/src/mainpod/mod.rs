@@ -37,10 +37,7 @@ impl std::fmt::Display for MainPodError {
                 write!(f, "{pod_type} pod missing required field: {field}")
             }
             MainPodError::InvalidValue { field, expected } => {
-                write!(
-                    f,
-                    "Invalid value for field {field}: expected {expected}"
-                )
+                write!(f, "Invalid value for field {field}: expected {expected}")
             }
             MainPodError::ProofGeneration(msg) => {
                 write!(f, "Proof generation failed: {msg}")
@@ -113,6 +110,15 @@ pub fn extract_post_id(pod: &SignedPod, pod_type: &'static str) -> MainPodResult
         })
 }
 
+pub fn extract_authors(pod: &SignedPod, pod_type: &'static str) -> MainPodResult<Value> {
+    pod.get("authors")
+        .cloned()
+        .ok_or(MainPodError::MissingField {
+            pod_type,
+            field: "authors",
+        })
+}
+
 pub fn extract_tags(pod: &SignedPod, pod_type: &'static str) -> MainPodResult<Value> {
     pod.get("tags").cloned().ok_or(MainPodError::MissingField {
         pod_type,
@@ -133,4 +139,3 @@ mod tests {
 
     // Add unit tests for the utility functions here
 }
-

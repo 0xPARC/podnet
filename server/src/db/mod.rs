@@ -43,9 +43,10 @@ impl Database {
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 pod TEXT NOT NULL,
                 timestamp_pod TEXT NOT NULL,
-                user_id TEXT NOT NULL,
+                uploader_id TEXT NOT NULL,
                 upvote_count_pod TEXT,
                 tags TEXT DEFAULT '[]',
+                authors TEXT DEFAULT '[]',
                 FOREIGN KEY (post_id) REFERENCES posts (id),
                 UNIQUE (post_id, revision)
             )",
@@ -141,8 +142,9 @@ impl Database {
         content_id: &Hash,
         post_id: i64,
         pod: &MainPod,
-        user_id: &str,
+        uploader_id: &str,
         tags: &HashSet<String>,
+        authors: &HashSet<String>,
         storage: &crate::storage::ContentAddressedStorage,
     ) -> Result<Document> {
         let mut conn = self.conn.lock().unwrap();
@@ -164,17 +166,22 @@ impl Database {
         // Serialize tags to JSON
         let tags_json = serde_json::to_string(tags)
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+        
+        // Serialize authors to JSON
+        let authors_json = serde_json::to_string(authors)
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
         // Insert document with empty timestamp_pod and null upvote_count_pod initially
         tx.execute(
-            "INSERT INTO documents (content_id, post_id, revision, pod, timestamp_pod, user_id, upvote_count_pod, tags) VALUES (?1, ?2, ?3, ?4, '', ?5, NULL, ?6)",
+            "INSERT INTO documents (content_id, post_id, revision, pod, timestamp_pod, uploader_id, upvote_count_pod, tags, authors) VALUES (?1, ?2, ?3, ?4, '', ?5, NULL, ?6, ?7)",
             rusqlite::params![
                 content_id_string,
                 post_id,
                 next_revision,
                 pod_json,
-                user_id,
+                uploader_id,
                 tags_json,
+                authors_json,
             ],
         )?;
 
@@ -232,10 +239,11 @@ impl Database {
             created_at: None, // Will be filled by database
             pod: pod.clone(),
             timestamp_pod,
-            user_id: user_id.to_string(),
+            uploader_id: uploader_id.to_string(),
             upvote_count,
             upvote_count_pod: None, // Will be set by background task
             tags: tags.clone(),
+            authors: authors.clone(),
         };
 
         Ok(Document { metadata, content })
@@ -244,13 +252,15 @@ impl Database {
     pub fn get_raw_document(&self, id: i64) -> Result<Option<RawDocument>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod, user_id, upvote_count_pod, tags FROM documents WHERE id = ?1"
+            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod, uploader_id, upvote_count_pod, tags, authors FROM documents WHERE id = ?1"
         )?;
 
         let document = stmt
             .query_row([id], |row| {
                 let tags_json: String = row.get(9)?;
                 let tags: HashSet<String> = serde_json::from_str(&tags_json).unwrap_or_default();
+                let authors_json: String = row.get(10)?;
+                let authors: HashSet<String> = serde_json::from_str(&authors_json).unwrap_or_default();
                 Ok(RawDocument {
                     id: Some(row.get(0)?),
                     content_id: row.get(1)?,
@@ -259,9 +269,10 @@ impl Database {
                     created_at: Some(row.get(4)?),
                     pod: row.get(5)?,
                     timestamp_pod: row.get(6)?,
-                    user_id: row.get(7)?,
+                    uploader_id: row.get(7)?,
                     upvote_count_pod: row.get(8)?,
                     tags,
+                    authors,
                 })
             })
             .optional()?;
@@ -272,7 +283,7 @@ impl Database {
     pub fn get_documents_by_post_id(&self, post_id: i64) -> Result<Vec<RawDocument>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod, user_id, upvote_count_pod, tags
+            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod, uploader_id, upvote_count_pod, tags, authors
              FROM documents WHERE post_id = ?1 ORDER BY revision DESC",
         )?;
 
@@ -280,6 +291,8 @@ impl Database {
             .query_map([post_id], |row| {
                 let tags_json: String = row.get(9)?;
                 let tags: HashSet<String> = serde_json::from_str(&tags_json).unwrap_or_default();
+                let authors_json: String = row.get(10)?;
+                let authors: HashSet<String> = serde_json::from_str(&authors_json).unwrap_or_default();
                 Ok(RawDocument {
                     id: Some(row.get(0)?),
                     content_id: row.get(1)?,
@@ -288,9 +301,10 @@ impl Database {
                     created_at: Some(row.get(4)?),
                     pod: row.get(5)?,
                     timestamp_pod: row.get(6)?,
-                    user_id: row.get(7)?,
+                    uploader_id: row.get(7)?,
                     upvote_count_pod: row.get(8)?,
                     tags,
+                    authors,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -301,7 +315,7 @@ impl Database {
     pub fn get_latest_document_by_post_id(&self, post_id: i64) -> Result<Option<RawDocument>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod, user_id, upvote_count_pod, tags
+            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod, uploader_id, upvote_count_pod, tags, authors
              FROM documents WHERE post_id = ?1 ORDER BY revision DESC LIMIT 1",
         )?;
 
@@ -309,6 +323,8 @@ impl Database {
             .query_row([post_id], |row| {
                 let tags_json: String = row.get(9)?;
                 let tags: HashSet<String> = serde_json::from_str(&tags_json).unwrap_or_default();
+                let authors_json: String = row.get(10)?;
+                let authors: HashSet<String> = serde_json::from_str(&authors_json).unwrap_or_default();
                 Ok(RawDocument {
                     id: Some(row.get(0)?),
                     content_id: row.get(1)?,
@@ -317,9 +333,10 @@ impl Database {
                     created_at: Some(row.get(4)?),
                     pod: row.get(5)?,
                     timestamp_pod: row.get(6)?,
-                    user_id: row.get(7)?,
+                    uploader_id: row.get(7)?,
                     upvote_count_pod: row.get(8)?,
                     tags,
+                    authors,
                 })
             })
             .optional()?;
@@ -330,7 +347,7 @@ impl Database {
     pub fn get_all_documents(&self) -> Result<Vec<RawDocument>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod, user_id, upvote_count_pod, tags
+            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod, uploader_id, upvote_count_pod, tags, authors
              FROM documents ORDER BY created_at DESC",
         )?;
 
@@ -338,6 +355,8 @@ impl Database {
             .query_map([], |row| {
                 let tags_json: String = row.get(9)?;
                 let tags: HashSet<String> = serde_json::from_str(&tags_json).unwrap_or_default();
+                let authors_json: String = row.get(10)?;
+                let authors: HashSet<String> = serde_json::from_str(&authors_json).unwrap_or_default();
                 Ok(RawDocument {
                     id: Some(row.get(0)?),
                     content_id: row.get(1)?,
@@ -346,9 +365,10 @@ impl Database {
                     created_at: Some(row.get(4)?),
                     pod: row.get(5)?,
                     timestamp_pod: row.get(6)?,
-                    user_id: row.get(7)?,
+                    uploader_id: row.get(7)?,
                     upvote_count_pod: row.get(8)?,
                     tags,
+                    authors,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -534,10 +554,11 @@ impl Database {
             created_at: raw_doc.created_at,
             pod,
             timestamp_pod,
-            user_id: raw_doc.user_id,
+            uploader_id: raw_doc.uploader_id,
             upvote_count,
             upvote_count_pod,
             tags: raw_doc.tags,
+            authors: raw_doc.authors,
         })
     }
 

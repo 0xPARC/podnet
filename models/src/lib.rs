@@ -21,9 +21,10 @@ pub struct RawDocument {
     pub created_at: Option<String>,
     pub pod: String,                      // JSON string of the signed pod
     pub timestamp_pod: String,            // JSON string of the server timestamp pod
-    pub user_id: String,                  // Username of the author
+    pub uploader_id: String,              // Username of the uploader
     pub upvote_count_pod: Option<String>, // JSON string of the upvote count main pod
     pub tags: HashSet<String>,            // Set of tags for document organization
+    pub authors: HashSet<String>,         // Set of authors for document attribution
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -62,13 +63,14 @@ pub struct DocumentMetadata {
     /// This pod proves the document was timestamped by the server and establishes
     /// the canonical ordering of document creation.
     pub timestamp_pod: SignedPod,
-    pub user_id: String,   // Username of the author
+    pub uploader_id: String, // Username of the uploader
     pub upvote_count: i64, // Number of upvotes for this document
     /// MainPod that cryptographically proves the upvote count is correct
     /// Proves: upvote_count(N, content_hash, post_id) where N is the actual count
     /// Uses recursive proofs starting from base case (count=0) and building up
     pub upvote_count_pod: Option<MainPod>,
     pub tags: HashSet<String>, // Set of tags for document organization and discovery
+    pub authors: HashSet<String>, // Set of authors for document attribution
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -81,6 +83,7 @@ pub struct Document {
 pub struct PublishRequest {
     pub content: String,
     pub tags: HashSet<String>, // Set of tags for document organization
+    pub authors: HashSet<String>, // Set of authors for document attribution
     /// MainPod that cryptographically proves the user's identity and document authenticity:
     ///
     /// Contains two inner pods:
@@ -218,16 +221,17 @@ pub fn get_publish_verification_predicate() -> String {
             Equal(?identity_pod["username"], ?username)
         )
 
-        document_verified(content_hash, post_id, tags, private: document_pod) = AND(
+        document_verified(content_hash, post_id, tags, authors, private: document_pod) = AND(
             Equal(?document_pod["{key_type}"], {signed_pod_type})
             Equal(?document_pod["content_hash"], ?content_hash)
             Equal(?document_pod["tags"], ?tags)
+            Equal(?document_pod["authors"], ?authors)
             Equal(?document_pod["post_id"], ?post_id)
         )
 
-        publish_verification(username, content_hash, identity_server_pk, post_id, tags, private: identity_pod, document_pod) = AND(
+        publish_verification(username, content_hash, identity_server_pk, post_id, tags, authors, private: identity_pod, document_pod) = AND(
             identity_verified(?username)
-            document_verified(?content_hash, ?post_id, ?tags)
+            document_verified(?content_hash, ?post_id, ?tags, ?authors)
             Equal(?identity_pod["{key_signer}"], ?identity_server_pk)
             Equal(?identity_pod["user_public_key"], ?document_pod["{key_signer}"]) 
         )

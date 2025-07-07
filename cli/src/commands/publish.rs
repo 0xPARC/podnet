@@ -22,6 +22,7 @@ pub async fn publish_content(
     identity_pod_file: &str,
     use_mock: bool,
     tags: Option<&String>,
+    authors: Option<&String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("Publishing content to server using main pod verification...");
 
@@ -87,6 +88,15 @@ pub async fn publish_content(
     identity_pod.verify()?;
     println!("✓ Identity pod verification successful");
 
+    // Extract username from identity pod for authors default
+    let username = identity_pod
+        .get("username")
+        .and_then(|v| v.as_str())
+        .ok_or("Identity pod missing username")?
+        .to_string();
+
+    println!("Username: {username}");
+
     let content_hash = hash_values(&[Value::from(content.clone())]);
     // Load keypair from file
     let file = File::open(keypair_file)?;
@@ -104,6 +114,38 @@ pub async fn publish_content(
     println!("Content hash: {content_hash}");
     println!("Tags: {document_tags:?}");
 
+    // Process authors (default to uploader if not provided or empty)
+    let document_authors: HashSet<String> = if let Some(authors_str) = authors {
+        let parsed_authors: HashSet<String> = authors_str
+            .split(',')
+            .map(|author| author.trim().to_string())
+            .filter(|author| !author.is_empty())
+            .collect();
+
+        if parsed_authors.is_empty() {
+            // If authors string was provided but empty, default to uploader
+            let mut default_authors = HashSet::new();
+            default_authors.insert(username.clone());
+            default_authors
+        } else {
+            parsed_authors
+        }
+    } else {
+        // If no authors provided, default to uploader
+        let mut default_authors = HashSet::new();
+        default_authors.insert(username.clone());
+        default_authors
+    };
+
+    println!(
+        "Authors: {}",
+        document_authors
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+
     // Create document pod with content hash, timestamp, tags, and optional post_id
     let params = PodNetProverSetup::get_params();
     let mut document_builder = SignedPodBuilder::new(&params);
@@ -119,6 +161,16 @@ pub async fn publish_content(
             .collect(),
     )?;
     document_builder.insert("tags", tag_set);
+
+    // Add authors to the document pod
+    let authors_set = Set::new(
+        5,
+        document_authors
+            .iter()
+            .map(|author| Value::from(author.as_str()))
+            .collect(),
+    )?;
+    document_builder.insert("authors", authors_set);
 
     // Add post_id to the pod if provided (for adding revision to existing post)
     if let Some(id) = post_id {
@@ -136,18 +188,10 @@ pub async fn publish_content(
     println!("✓ Document pod verification successful");
 
     // Extract verification info manually
-    let username = identity_pod
-        .get("username")
-        .and_then(|v| v.as_str())
-        .ok_or("Identity pod missing username")?
-        .to_string();
-
     let verified_content_hash = document_pod
         .get("content_hash")
         .and_then(|v| v.as_hash())
         .ok_or("Document pod missing content_hash")?;
-
-    println!("Username: {username}");
 
     // Get identity server public key from identity pod
     let identity_server_pk = identity_pod
@@ -173,6 +217,7 @@ pub async fn publish_content(
     let payload = serde_json::json!({
         "content": content,
         "tags": document_tags,
+        "authors": document_authors,
         "main_pod": main_pod
     });
     println!("Main pod is: {}", &main_pod);

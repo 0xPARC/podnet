@@ -29,12 +29,13 @@ use utils::*;
 use verification::*;
 
 
-fn create_enhanced_html_document_with_author(
+fn create_enhanced_html_document_with_uploader(
     id: &str,
     content_id: &str,
     timestamp: &str,
-    author: &str,
+    uploader: &str,
     tags: &std::collections::HashSet<String>,
+    authors: &std::collections::HashSet<String>,
     html_content: &str,
     revision_links: &str,
 ) -> String {
@@ -44,6 +45,13 @@ fn create_enhanced_html_document_with_author(
     } else {
         let tag_list: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
         tag_list.join(", ")
+    };
+
+    let authors_display = if authors.is_empty() {
+        "None".to_string()
+    } else {
+        let authors_list: Vec<&str> = authors.iter().map(|s| s.as_str()).collect();
+        authors_list.join(", ")
     };
 
     format!(
@@ -216,12 +224,12 @@ MathJax = {{
                 const metadata = document.querySelector('.metadata');
                 const contentId = selectedDoc.getAttribute('data-content-id') || 'N/A';
                 const timestamp = selectedDoc.getAttribute('data-created') || 'N/A';
-                const author = selectedDoc.getAttribute('data-author') || 'Unknown';
+                const uploader = selectedDoc.getAttribute('data-uploader') || 'Unknown';
                 const revision = selectedDoc.getAttribute('data-revision') || 'N/A';
                 
                 metadata.innerHTML = `
                     <div><strong>Post ID:</strong> {id}</div>
-                    <div><strong>Author:</strong> ${{author}}</div>
+                    <div><strong>Uploader:</strong> ${{uploader}}</div>
                     <div><strong>Content Hash:</strong> <code>${{contentId}}</code></div>
                     <div><strong>Timestamp:</strong> ${{timestamp}}</div>
                     <div><strong>Revision:</strong> ${{revision}}</div>
@@ -246,7 +254,8 @@ MathJax = {{
             <h1>PodNet Content</h1>
             <div class="metadata">
                 <div><strong>Post ID:</strong> {id}</div>
-                <div><strong>Author:</strong> {author}</div>
+                <div><strong>Uploader:</strong> {uploader}</div>
+                <div><strong>Authors:</strong> {authors_display}</div>
                 <div><strong>Content Hash:</strong> <code>{content_id}</code></div>
                 <div><strong>Timestamp:</strong> {timestamp}</div>
                 <div><strong>Tags:</strong> {tags_display}</div>
@@ -298,6 +307,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .short('t')
                         .long("tags")
                         .value_name("TAG1,TAG2,TAG3"),
+                    Arg::new("authors")
+                        .help("Optional comma-separated list of authors for document attribution (defaults to uploader)")
+                        .short('a')
+                        .long("authors")
+                        .value_name("AUTHOR1,AUTHOR2,AUTHOR3"),
                 ])
                 .args(content_args()),
         )
@@ -381,7 +395,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let identity_pod_file = sub_matches.get_one::<String>("identity_pod").unwrap();
             let use_mock = sub_matches.get_flag("mock");
             let tags = sub_matches.get_one::<String>("tags");
-            publish::publish_content(keypair_file, &content, file_path, format_override, server, post_id, identity_pod_file, use_mock, tags).await?;
+            let authors = sub_matches.get_one::<String>("authors");
+            publish::publish_content(keypair_file, &content, file_path, format_override, server, post_id, identity_pod_file, use_mock, tags, authors).await?;
         }
         Some(("get-post", sub_matches)) => {
             let post_id = sub_matches.get_one::<String>("post_id").unwrap();
@@ -780,13 +795,14 @@ async fn view_post_in_browser(
         let content_id = document.metadata.content_id;
         let created_at = document.metadata.created_at.as_deref().unwrap_or("Unknown").to_string();
         let revision = document.metadata.revision;
-        let username = document.metadata.user_id.clone();
+        let uploader_username = document.metadata.uploader_id.clone();
         let upvote_count = document.metadata.upvote_count;
         let tags = document.metadata.tags.clone();
+        let authors = document.metadata.authors.clone();
 
         // Verify signatures (required)
         println!("Verifying signatures for revision {revision}...");
-        verify_publish_verification(&document.metadata.pod, &content_id, &username, post_id.parse()?, &tags)
+        verify_publish_verification(&document.metadata.pod, &content_id, &uploader_username, post_id.parse()?, &tags)
             .map_err(|e| format!("MainPod verification failed: {e}"))?;
         println!("Main pod: {}", document.metadata.pod);
         println!("✓ Main pod verification completed");
@@ -815,10 +831,11 @@ async fn view_post_in_browser(
             revision,
             content_id,
             created_at,
-            username.to_string(),
+            uploader_username.to_string(),
             html_content.to_string(),
             upvote_count,
             tags,
+            authors
         ));
     }
 
@@ -835,7 +852,7 @@ async fn view_post_in_browser(
     let mut embedded_documents = String::new();
 
     if document_data.len() > 1 {
-        for (i, (doc_id, doc_revision, content_id, doc_created, username, html_content, upvote_count, tags)) in
+        for (i, (doc_id, doc_revision, content_id, doc_created, username, html_content, upvote_count, tags, authors)) in
             document_data.iter().enumerate()
         {
             let is_current = i == 0; // First item is the latest
@@ -859,13 +876,13 @@ async fn view_post_in_browser(
 
             // Add hidden div with document content
             embedded_documents.push_str(&format!(
-                r#"<div id="document-{doc_id}" class="document-content" style="display: {display_style};" data-content-id="{content_id}" data-created="{doc_created}" data-author="{username}" data-revision="{doc_revision}" data-upvotes="{upvote_count}">
+                r#"<div id="document-{doc_id}" class="document-content" style="display: {display_style};" data-content-id="{content_id}" data-created="{doc_created}" data-uploader="{username}" data-revision="{doc_revision}" data-upvotes="{upvote_count}">
                     {html_content}
                 </div>"#
             ));
         }
     } else {
-        let (doc_id, doc_revision, content_id, doc_created, username, html_content, upvote_count, _tags) =
+        let (doc_id, doc_revision, content_id, doc_created, username, html_content, upvote_count, _tags, authors) =
             &document_data[0];
         revision_links.push_str(&format!(
             r#"<div style="padding: 10px; color: #666; font-style: italic;">
@@ -875,19 +892,20 @@ async fn view_post_in_browser(
         ));
 
         embedded_documents.push_str(&format!(
-            r#"<div id="document-{doc_id}" class="document-content" style="display: block;" data-content-id="{content_id}" data-created="{doc_created}" data-author="{username}" data-revision="{doc_revision}" data-upvotes="{upvote_count}">
+            r#"<div id="document-{doc_id}" class="document-content" style="display: block;" data-content-id="{content_id}" data-created="{doc_created}" data-uploader="{username}" data-revision="{doc_revision}" data-upvotes="{upvote_count}">
                 {html_content}
             </div>"#
         ));
     }
 
     let content_id_hex: String = latest_doc.2.encode_hex();
-    let full_html = create_enhanced_html_document_with_author(
+    let full_html = create_enhanced_html_document_with_uploader(
         post_id,
         &content_id_hex,       // content_id
         &latest_doc.3,       // created_at
-        &latest_doc.4,       // username
+        &latest_doc.4,       // uploader_username
         &latest_doc.7,       // tags
+        &latest_doc.8,       // authors
         &embedded_documents, // all documents embedded
         &revision_links,
     );
@@ -900,7 +918,7 @@ async fn view_post_in_browser(
         "Opening post {post_id} with {} revisions in browser...",
         document_data.len()
     );
-    println!("Latest author: {}", latest_doc.4);
+    println!("Latest uploader: {}", latest_doc.4);
     println!("Latest document ID: {}", latest_doc.2);
     println!("Latest revision: {}", latest_doc.1);
     println!("Latest created: {}", latest_doc.3);

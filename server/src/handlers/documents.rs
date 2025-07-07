@@ -152,7 +152,7 @@ pub async fn publish_document(
 
     // Extract public data directly from main pod
     log::info!("Extracting public data from main pod");
-    let username = publish_verification_args[0].as_str().ok_or_else(|| {
+    let uploader_username = publish_verification_args[0].as_str().ok_or_else(|| {
         log::error!("publish_verification predicate missing username argument");
         StatusCode::BAD_REQUEST
     })?;
@@ -172,7 +172,7 @@ pub async fn publish_document(
     })?;
 
     log::info!(
-        "✓ Extracted public data: username={username}, content_hash={content_hash}, post_id={post_id}"
+        "✓ Extracted public data: uploader_username={uploader_username}, content_hash={content_hash}, post_id={post_id}"
     );
 
     // Verify the identity server public key is registered in our database
@@ -255,8 +255,9 @@ pub async fn publish_document(
             &content_hash,
             final_post_id,
             &payload.main_pod,
-            username,
+            uploader_username,
             &payload.tags,
+            &payload.authors,
             &state.storage,
         )
         .map_err(|e| {

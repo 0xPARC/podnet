@@ -66,7 +66,7 @@ pub async fn upvote_document(
 
     // Extract public data directly from main pod
     log::info!("Extracting public data from upvote main pod");
-    let username = upvote_verification_args[0]
+    let uploader_username = upvote_verification_args[0]
         .as_str()
         .ok_or_else(|| {
             log::error!("upvote_verification predicate missing username argument");
@@ -83,7 +83,7 @@ pub async fn upvote_document(
     })?;
 
     log::info!(
-        "✓ Extracted public data: username={username}, content_hash={content_hash}",
+        "✓ Extracted public data: uploader_username={uploader_username}, content_hash={content_hash}",
     );
 
     // Verify the identity server public key is registered in our database
@@ -140,7 +140,7 @@ pub async fn upvote_document(
     // Check if user has already upvoted this document (by username)
     let already_upvoted = state
         .db
-        .user_has_upvoted(document_id, &username)
+        .user_has_upvoted(document_id, &uploader_username)
         .map_err(|e| {
             log::error!("Database error checking existing upvote: {e}");
             StatusCode::INTERNAL_SERVER_ERROR
@@ -148,7 +148,7 @@ pub async fn upvote_document(
 
     if already_upvoted {
         log::warn!(
-            "User {username} has already upvoted document {document_id}"
+            "User {uploader_username} has already upvoted document {document_id}"
         );
         return Err(StatusCode::CONFLICT);
     }
@@ -161,7 +161,7 @@ pub async fn upvote_document(
 
     let upvote_id = state
         .db
-        .create_upvote(document_id, &username, &upvote_main_pod_json)
+        .create_upvote(document_id, &uploader_username, &upvote_main_pod_json)
         .map_err(|e| {
             log::error!("Failed to store upvote: {e}");
             StatusCode::INTERNAL_SERVER_ERROR
