@@ -122,7 +122,7 @@ pub async fn upvote_document(
         use_mock_proofs: use_mock,
     };
     let main_pod = prove_upvote_verification(params)
-        .map_err(|e| format!("Failed to generate upvote verification MainPod: {}", e))?;
+        .map_err(|e| format!("Failed to generate upvote verification MainPod: {e}"))?;
 
     println!("✓ Upvote main pod created and verified");
 

@@ -34,23 +34,22 @@ impl std::fmt::Display for MainPodError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             MainPodError::MissingField { pod_type, field } => {
-                write!(f, "{} pod missing required field: {}", pod_type, field)
+                write!(f, "{pod_type} pod missing required field: {field}")
             }
             MainPodError::InvalidValue { field, expected } => {
                 write!(
                     f,
-                    "Invalid value for field {}: expected {}",
-                    field, expected
+                    "Invalid value for field {field}: expected {expected}"
                 )
             }
             MainPodError::ProofGeneration(msg) => {
-                write!(f, "Proof generation failed: {}", msg)
+                write!(f, "Proof generation failed: {msg}")
             }
             MainPodError::Verification(msg) => {
-                write!(f, "Verification failed: {}", msg)
+                write!(f, "Verification failed: {msg}")
             }
             MainPodError::InvalidSet { field } => {
-                write!(f, "Invalid set for field: {}", field)
+                write!(f, "Invalid set for field: {field}")
             }
         }
     }
@@ -124,7 +123,7 @@ pub fn extract_tags(pod: &SignedPod, pod_type: &'static str) -> MainPodResult<Va
 /// Verify basic MainPod structure and signature
 pub fn verify_mainpod_basics(main_pod: &MainPod) -> MainPodResult<()> {
     main_pod.pod.verify().map_err(|e| {
-        MainPodError::Verification(format!("MainPod signature verification failed: {}", e))
+        MainPodError::Verification(format!("MainPod signature verification failed: {e}"))
     })
 }
 

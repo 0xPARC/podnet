@@ -4,7 +4,7 @@ use pod_utils::prover_setup::PodNetProverSetup;
 use pod2::backends::plonky2::primitives::ec::schnorr::SecretKey;
 use pod2::backends::plonky2::signedpod::Signer;
 use pod2::frontend::{SignedPod, SignedPodBuilder};
-use pod2::middleware::{Hash, KEY_SIGNER, KEY_TYPE, Value, containers::Set, hash_values};
+use pod2::middleware::{KEY_SIGNER, Value, containers::Set, hash_values};
 use podnet_models::mainpod::publish::{PublishProofParams, prove_publish_verification};
 use std::collections::HashSet;
 use std::fs::File;
@@ -164,7 +164,7 @@ pub async fn publish_content(
         use_mock_proofs: use_mock,
     };
     let main_pod = prove_publish_verification(params)
-        .map_err(|e| format!("Failed to generate publish verification MainPod: {}", e))?;
+        .map_err(|e| format!("Failed to generate publish verification MainPod: {e}"))?;
 
     println!("✓ Main pod created and verified");
 

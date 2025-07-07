@@ -787,7 +787,7 @@ async fn view_post_in_browser(
         // Verify signatures (required)
         println!("Verifying signatures for revision {revision}...");
         verify_publish_verification(&document.metadata.pod, &content_id, &username, post_id.parse()?, &tags)
-            .map_err(|e| format!("MainPod verification failed: {}", e))?;
+            .map_err(|e| format!("MainPod verification failed: {e}"))?;
         println!("Main pod: {}", document.metadata.pod);
         println!("✓ Main pod verification completed");
 
@@ -804,10 +804,10 @@ async fn view_post_in_browser(
         if let Some(upvote_count_pod) = &document.metadata.upvote_count_pod {
             println!("Verifying upvote count pod...");
             verify_upvote_count(upvote_count_pod, upvote_count, &content_id)
-                .map_err(|e| format!("Upvote count MainPod verification failed: {}", e))?;
-            println!("✓ Upvote count MainPod verification completed (count: {})", upvote_count);
+                .map_err(|e| format!("Upvote count MainPod verification failed: {e}"))?;
+            println!("✓ Upvote count MainPod verification completed (count: {upvote_count})");
         } else if upvote_count > 0 {
-            println!("⚠️  Warning: Document claims {} upvotes but no upvote count proof provided", upvote_count);
+            println!("⚠️  Warning: Document claims {upvote_count} upvotes but no upvote count proof provided");
         }
 
         document_data.push((

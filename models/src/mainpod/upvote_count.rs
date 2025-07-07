@@ -6,7 +6,7 @@ use pod_utils::ValueExt;
 use pod_utils::prover_setup::PodNetProverSetup;
 use pod2::frontend::{MainPod, MainPodBuilder, SignedPod};
 use pod2::lang::parse;
-use pod2::middleware::{CustomPredicateRef, Hash, Statement, Value};
+use pod2::middleware::{Hash, Statement, Value};
 use pod2::op;
 
 /// Parameters for upvote count base case proof generation
@@ -34,12 +34,12 @@ pub struct UpvoteCountInductiveParams<'a> {
 pub fn prove_upvote_count_base(params: UpvoteCountBaseParams) -> MainPodResult<MainPod> {
     let pod_params = PodNetProverSetup::get_params();
     let (vd_set, prover) = PodNetProverSetup::create_prover_setup(params.use_mock_proofs)
-        .map_err(|e| MainPodError::ProofGeneration(e))?;
+        .map_err(MainPodError::ProofGeneration)?;
 
     // Parse predicates
     let predicate_input = get_upvote_count_predicate();
     let batch = parse(&predicate_input, &pod_params, &[])
-        .map_err(|e| MainPodError::ProofGeneration(format!("Predicate parsing failed: {}", e)))?
+        .map_err(|e| MainPodError::ProofGeneration(format!("Predicate parsing failed: {e}")))?
         .custom_batch;
 
     let upvote_count_base_pred = batch
@@ -55,14 +55,14 @@ pub fn prove_upvote_count_base(params: UpvoteCountBaseParams) -> MainPodResult<M
     // Base case constraints
     let count_check = builder
         .priv_op(op!(eq, 0, 0))
-        .map_err(|e| MainPodError::ProofGeneration(format!("Count check failed: {}", e)))?;
+        .map_err(|e| MainPodError::ProofGeneration(format!("Count check failed: {e}")))?;
     let content_hash_check = builder
         .priv_op(op!(
             eq,
             (params.data_pod, "content_hash"),
             *params.content_hash
         ))
-        .map_err(|e| MainPodError::ProofGeneration(format!("Content hash check failed: {}", e)))?;
+        .map_err(|e| MainPodError::ProofGeneration(format!("Content hash check failed: {e}")))?;
 
     let _upvote_count_base = builder
         .pub_op(op!(
@@ -71,14 +71,14 @@ pub fn prove_upvote_count_base(params: UpvoteCountBaseParams) -> MainPodResult<M
             count_check,
             content_hash_check
         ))
-        .map_err(|e| MainPodError::ProofGeneration(format!("Base case statement failed: {}", e)))?;
+        .map_err(|e| MainPodError::ProofGeneration(format!("Base case statement failed: {e}")))?;
 
     let main_pod = builder.prove(prover.as_ref(), &pod_params).map_err(|e| {
-        MainPodError::ProofGeneration(format!("Base case proof generation failed: {}", e))
+        MainPodError::ProofGeneration(format!("Base case proof generation failed: {e}"))
     })?;
 
     main_pod.pod.verify().map_err(|e| {
-        MainPodError::ProofGeneration(format!("Base case proof verification failed: {}", e))
+        MainPodError::ProofGeneration(format!("Base case proof verification failed: {e}"))
     })?;
 
     Ok(main_pod)
@@ -91,12 +91,12 @@ pub fn prove_upvote_count_base(params: UpvoteCountBaseParams) -> MainPodResult<M
 pub fn prove_upvote_count_inductive(params: UpvoteCountInductiveParams) -> MainPodResult<MainPod> {
     let pod_params = PodNetProverSetup::get_params_with_batch_size(10); // Larger batch for inductive proofs
     let (vd_set, prover) = PodNetProverSetup::create_prover_setup(params.use_mock_proofs)
-        .map_err(|e| MainPodError::ProofGeneration(e))?;
+        .map_err(MainPodError::ProofGeneration)?;
 
     // Parse predicates
     let predicate_input = get_upvote_count_predicate();
     let batch = parse(&predicate_input, &pod_params, &[])
-        .map_err(|e| MainPodError::ProofGeneration(format!("Predicate parsing failed: {}", e)))?
+        .map_err(|e| MainPodError::ProofGeneration(format!("Predicate parsing failed: {e}")))?
         .custom_batch;
 
     let upvote_count_ind_pred =
@@ -122,7 +122,7 @@ pub fn prove_upvote_count_inductive(params: UpvoteCountInductiveParams) -> MainP
     // Extract intermediate count from the previous proof
     let upvote_stmt = extract_upvote_pred_from_mainpod(params.intermediate_main_pod)?;
     let upvote_args = extract_upvote_args_from_statement(&upvote_stmt)?;
-    let intermediate_count = upvote_args.get(0).and_then(Value::as_i64).ok_or_else(|| {
+    let intermediate_count = upvote_args.first().and_then(Value::as_i64).ok_or_else(|| {
         MainPodError::Verification("Invalid upvote count in intermediate pod".to_string())
     })?;
 
@@ -146,7 +146,7 @@ pub fn prove_upvote_count_inductive(params: UpvoteCountInductiveParams) -> MainP
     // Inductive case constraints
     let count_sum_check = builder
         .priv_op(op!(sum_of, params.expected_count, intermediate_count, 1))
-        .map_err(|e| MainPodError::ProofGeneration(format!("Count sum check failed: {}", e)))?;
+        .map_err(|e| MainPodError::ProofGeneration(format!("Count sum check failed: {e}")))?;
 
     let _upvote_count_inductive = builder
         .pub_op(op!(
@@ -157,15 +157,15 @@ pub fn prove_upvote_count_inductive(params: UpvoteCountInductiveParams) -> MainP
             upvote_verification_stmt
         ))
         .map_err(|e| {
-            MainPodError::ProofGeneration(format!("Inductive case statement failed: {}", e))
+            MainPodError::ProofGeneration(format!("Inductive case statement failed: {e}"))
         })?;
 
     let main_pod = builder.prove(prover.as_ref(), &pod_params).map_err(|e| {
-        MainPodError::ProofGeneration(format!("Inductive case proof generation failed: {}", e))
+        MainPodError::ProofGeneration(format!("Inductive case proof generation failed: {e}"))
     })?;
 
     main_pod.pod.verify().map_err(|e| {
-        MainPodError::ProofGeneration(format!("Inductive case proof verification failed: {}", e))
+        MainPodError::ProofGeneration(format!("Inductive case proof verification failed: {e}"))
     })?;
 
     Ok(main_pod)
@@ -186,7 +186,7 @@ pub fn verify_upvote_count(
     let params = PodNetProverSetup::get_params();
     let predicate_input = get_upvote_count_predicate();
     let batch = parse(&predicate_input, &params, &[])
-        .map_err(|e| MainPodError::Verification(format!("Predicate parsing failed: {}", e)))?
+        .map_err(|e| MainPodError::Verification(format!("Predicate parsing failed: {e}")))?
         .custom_batch;
 
     let upvote_count_pred = batch
@@ -239,7 +239,7 @@ fn extract_upvote_pred_from_mainpod(main_pod: &MainPod) -> MainPodResult<Stateme
     let params = PodNetProverSetup::get_params();
     let predicate_input = get_upvote_count_predicate();
     let batch = parse(&predicate_input, &params, &[])
-        .map_err(|e| MainPodError::Verification(format!("Predicate parsing failed: {}", e)))?
+        .map_err(|e| MainPodError::Verification(format!("Predicate parsing failed: {e}")))?
         .custom_batch;
 
     let upvote_count_pred = batch
@@ -265,7 +265,7 @@ fn extract_upvote_args_from_statement(statement: &Statement) -> MainPodResult<Ve
     let params = PodNetProverSetup::get_params();
     let predicate_input = get_upvote_count_predicate();
     let batch = parse(&predicate_input, &params, &[])
-        .map_err(|e| MainPodError::Verification(format!("Predicate parsing failed: {}", e)))?
+        .map_err(|e| MainPodError::Verification(format!("Predicate parsing failed: {e}")))?
         .custom_batch;
 
     let upvote_count_pred = batch

@@ -1,6 +1,4 @@
-use crate::utils::{extract_document_metadata, handle_error_response, truncate_pod_json};
-use pod2::middleware::Hash;
-use podnet_models::mainpod::upvote_count::verify_upvote_count;
+use crate::utils::{handle_error_response, truncate_pod_json};
 
 //pub async fn get_document_by_id(
 //    document_id: &str,
@@ -207,7 +205,7 @@ fn print_document_row(document: &serde_json::Value) {
                 tag_strings.join(", ")
             }
         })
-        .unwrap_or_else(|| "".to_string());
+        .unwrap_or_default();
 
     // Truncate tags for display (max 28 chars to fit in column)
     let display_tags = if tags.len() > 28 {
