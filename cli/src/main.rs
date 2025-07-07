@@ -17,7 +17,7 @@ use pod2::backends::plonky2::{
 };
 use pod2::frontend::{MainPod, MainPodBuilder, SignedPod, SignedPodBuilder};
 use pod2::lang::parse;
-use pod2::middleware::{Params, PodProver, PodType, Value, KEY_SIGNER, KEY_TYPE};
+use pod2::middleware::{Params, PodProver, PodType, KEY_SIGNER, KEY_TYPE};
 use pod2::op;
 use pod_utils::ValueExt;
 use podnet_models::{get_publish_verification_predicate, mainpod::verify_publish_verification_main_pod};
@@ -247,13 +247,7 @@ MathJax = {{
         </div>
     </div>
 </body>
-</html>"#,
-        id = id,
-        author = author,
-        content_id = content_id,
-        timestamp = timestamp,
-        revision_links = revision_links,
-        html_content = html_content
+</html>"#
     )
 }
 
@@ -520,7 +514,7 @@ async fn publish_content(
         .ok_or("Document pod missing content_hash")?
         .to_string();
     
-    println!("Username: {}", username);
+    println!("Username: {username}");
     
     // Get identity server public key from identity pod
     let identity_server_pk = identity_pod
@@ -763,11 +757,11 @@ async fn view_post_in_browser(
 
         // Parse the document directly using the shared types
         let document: podnet_models::Document = serde_json::from_value(rendered_document.clone())
-            .map_err(|e| format!("Failed to parse document: {}", e))?;
+            .map_err(|e| format!("Failed to parse document: {e}"))?;
 
         let html_content = &document.content;
         
-        let content_id = document.metadata.content_id.clone();
+        let content_id = document.metadata.content_id;
         let created_at = document.metadata.created_at.as_deref().unwrap_or("Unknown").to_string();
         let revision = document.metadata.revision;
         let username = document.metadata.user_id.clone();
@@ -786,7 +780,7 @@ async fn view_post_in_browser(
         
         // Convert SignedPod to JSON value for verification function
         let timestamp_pod_json = serde_json::to_value(&document.metadata.timestamp_pod)
-            .map_err(|e| format!("Failed to serialize timestamp pod: {}", e))?;
+            .map_err(|e| format!("Failed to serialize timestamp pod: {e}"))?;
         verify_timestamp_pod_signature(&timestamp_pod_json, &server_public_key)?;
 
         document_data.push((
@@ -839,15 +833,7 @@ async fn view_post_in_browser(
             embedded_documents.push_str(&format!(
                 r#"<div id="document-{doc_id}" class="document-content" style="display: {display_style};" data-content-id="{content_id}" data-created="{doc_created}" data-author="{username}" data-revision="{doc_revision}" data-upvotes="{upvote_count}">
                     {html_content}
-                </div>"#,
-                doc_id = doc_id,
-                display_style = display_style,
-                content_id = content_id,
-                doc_created = doc_created,
-                username = username,
-                doc_revision = doc_revision,
-                upvote_count = upvote_count,
-                html_content = html_content
+                </div>"#
             ));
         }
     } else {
@@ -857,21 +843,13 @@ async fn view_post_in_browser(
             r#"<div style="padding: 10px; color: #666; font-style: italic;">
                 This post has only one revision.
                 <div class="upvote-count" style="margin-top: 5px; color: #333;">👍 {upvote_count}</div>
-            </div>"#,
-            upvote_count = upvote_count
+            </div>"#
         ));
 
         embedded_documents.push_str(&format!(
             r#"<div id="document-{doc_id}" class="document-content" style="display: block;" data-content-id="{content_id}" data-created="{doc_created}" data-author="{username}" data-revision="{doc_revision}" data-upvotes="{upvote_count}">
                 {html_content}
-            </div>"#,
-            doc_id = doc_id,
-            content_id = content_id,
-            doc_created = doc_created,
-            username = username,
-            doc_revision = doc_revision,
-            upvote_count = upvote_count,
-            html_content = html_content
+            </div>"#
         ));
     }
 
@@ -1053,7 +1031,7 @@ fn create_publish_verification_main_pod(
     use_mock: bool,
 ) -> Result<MainPod, Box<dyn std::error::Error>> {
 
-    let mut params = Params::default();
+    let params = Params::default();
     
     // Choose prover based on mock flag
     let mock_prover = MockProver {};
@@ -1078,7 +1056,7 @@ fn create_publish_verification_main_pod(
 
     // Get predicate definition from shared pod-utils
     let predicate_input = get_publish_verification_predicate();
-    println!("predicate is: {}", predicate_input);
+    println!("predicate is: {predicate_input}");
     
     println!("Parsing custom predicates...");
     let batch = parse(&predicate_input, &params, &[])?.custom_batch;

@@ -1,8 +1,4 @@
 use num_bigint::BigUint;
-use plonky2::field::goldilocks_field::GoldilocksField;
-use plonky2::field::types::{Field, PrimeField64};
-use plonky2::hash::poseidon::PoseidonHash;
-use plonky2::plonk::config::Hasher;
 use pod_utils::ValueExt;
 use pod2::backends::plonky2::primitives::ec::schnorr::SecretKey;
 use pod2::backends::plonky2::{
@@ -16,7 +12,6 @@ use pod2::middleware::{
 use pod2::op;
 use podnet_models::get_publish_verification_predicate;
 use std::fs::File;
-use std::io::Write;
 
 use crate::conversion::{DocumentFormat, convert_to_markdown, detect_format};
 use crate::utils::handle_error_response;
@@ -36,17 +31,17 @@ pub async fn publish_content(
     // Step 1: Determine document format
     let detected_format = if let Some(format_str) = format_override {
         DocumentFormat::from_str(format_str)
-            .ok_or_else(|| format!("Invalid format: {}", format_str))?
+            .ok_or_else(|| format!("Invalid format: {format_str}"))?
     } else {
         detect_format(content, file_path.map(|s| s.as_str()))
     };
 
-    println!("Detected format: {:?}", detected_format);
+    println!("Detected format: {detected_format:?}");
 
     // Step 2: Convert to Markdown only if necessary
     let markdown_content = if detected_format != DocumentFormat::Markdown {
         let converted = convert_to_markdown(content, &detected_format)?;
-        println!("✓ Content converted from {:?} to Markdown", detected_format);
+        println!("✓ Content converted from {detected_format:?} to Markdown");
         println!(
             "Converted content preview: {}",
             if converted.len() > 200 {
@@ -124,7 +119,7 @@ pub async fn publish_content(
         .and_then(|v| v.as_hash())
         .ok_or("Document pod missing content_hash")?;
 
-    println!("Username: {}", username);
+    println!("Username: {username}");
 
     // Get identity server public key from identity pod
     let identity_server_pk = identity_pod
@@ -214,7 +209,7 @@ fn create_publish_verification_main_pod(
 
     // Get predicate definition from shared pod-utils
     let predicate_input = get_publish_verification_predicate();
-    println!("predicate is: {}", predicate_input);
+    println!("predicate is: {predicate_input}");
 
     println!("Parsing custom predicates...");
     let batch = parse(&predicate_input, &params, &[])?.custom_batch;

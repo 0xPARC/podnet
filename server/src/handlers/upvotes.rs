@@ -5,10 +5,10 @@ use axum::{
 };
 use pod_utils::ValueExt;
 use pod2::backends::plonky2::{
-    primitives::ec::{curve::Point, schnorr::SecretKey},
+    primitives::ec::schnorr::SecretKey,
     signedpod::Signer,
 };
-use pod2::frontend::{MainPod, SignedPod, SignedPodBuilder};
+use pod2::frontend::{MainPod, SignedPodBuilder};
 use pod2::middleware::Hash;
 use podnet_models::{UpvoteRequest, get_upvote_verification_predicate};
 use std::sync::Arc;
@@ -83,9 +83,7 @@ pub async fn upvote_document(
     })?;
 
     log::info!(
-        "✓ Extracted public data: username={}, content_hash={}",
-        username,
-        content_hash,
+        "✓ Extracted public data: username={username}, content_hash={content_hash}",
     );
 
     // Verify the identity server public key is registered in our database
@@ -150,8 +148,7 @@ pub async fn upvote_document(
 
     if already_upvoted {
         log::warn!(
-            "User {} has already upvoted document {document_id}",
-            username
+            "User {username} has already upvoted document {document_id}"
         );
         return Err(StatusCode::CONFLICT);
     }
@@ -197,9 +194,7 @@ pub async fn upvote_document(
         .await
         {
             log::error!(
-                "Failed to generate inductive upvote count pod for document {}: {}",
-                doc_id,
-                e
+                "Failed to generate inductive upvote count pod for document {doc_id}: {e}"
             );
         }
     });
@@ -231,12 +226,12 @@ pub async fn generate_base_case_upvote_pod(
     let predicate_str = podnet_models::get_upvote_verification_predicate();
     let params = state.pod_config.get_params();
     let batch = pod2::lang::parse(&predicate_str, &params, &[])
-        .map_err(|e| format!("Failed to parse predicate: {}", e))?;
+        .map_err(|e| format!("Failed to parse predicate: {e}"))?;
 
     let (vd_set, prover) = state
         .pod_config
         .get_prover_setup()
-        .map_err(|e| format!("Failed to get prover setup: {:?}", e))?;
+        .map_err(|e| format!("Failed to get prover setup: {e:?}"))?;
 
     // create signed pod with public data
     let mut data_builder = SignedPodBuilder::new(&params);
@@ -279,22 +274,20 @@ pub async fn generate_base_case_upvote_pod(
     let main_pod = base_builder.prove(&*prover, &params)?;
     main_pod.pod.verify()?;
     log::info!(
-        "✓ Successfully proved upvote_count(0) for document {}",
-        document_id
+        "✓ Successfully proved upvote_count(0) for document {document_id}"
     );
 
     // Store the pod in the database
     let pod_json = serde_json::to_string(&main_pod)
-        .map_err(|e| format!("Failed to serialize main pod: {}", e))?;
+        .map_err(|e| format!("Failed to serialize main pod: {e}"))?;
 
     state
         .db
         .update_upvote_count_pod(document_id, &pod_json)
-        .map_err(|e| format!("Failed to store upvote count pod: {}", e))?;
+        .map_err(|e| format!("Failed to store upvote count pod: {e}"))?;
 
     log::info!(
-        "✓ Stored base case upvote count pod for document {}",
-        document_id
+        "✓ Stored base case upvote count pod for document {document_id}"
     );
 
     Ok(())
@@ -311,24 +304,21 @@ async fn generate_inductive_upvote_pod(
     use pod2::op;
 
     log::info!(
-        "Generating inductive upvote count pod for document {} (count={})",
-        document_id,
-        current_count
+        "Generating inductive upvote count pod for document {document_id} (count={current_count})"
     );
 
     // Get the previous upvote count pod from database (for recursive proof)
     let previous_pod_json = state
         .db
         .get_upvote_count_pod(document_id)
-        .map_err(|e| format!("Failed to get previous upvote count pod: {}", e))?;
+        .map_err(|e| format!("Failed to get previous upvote count pod: {e}"))?;
 
     let previous_pod = match previous_pod_json {
         Some(json) => serde_json::from_str::<pod2::frontend::MainPod>(&json)
-            .map_err(|e| format!("Failed to parse previous main pod: {}", e))?,
+            .map_err(|e| format!("Failed to parse previous main pod: {e}"))?,
         None => {
             log::warn!(
-                "No previous upvote count pod found for document {}, generating base case first",
-                document_id
+                "No previous upvote count pod found for document {document_id}, generating base case first"
             );
             // If no previous pod exists, generate base case first
             generate_base_case_upvote_pod(state.clone(), document_id, content_hash).await?;
@@ -337,11 +327,11 @@ async fn generate_inductive_upvote_pod(
             let base_pod_json = state
                 .db
                 .get_upvote_count_pod(document_id)
-                .map_err(|e| format!("Failed to get base case pod after generation: {}", e))?
+                .map_err(|e| format!("Failed to get base case pod after generation: {e}"))?
                 .ok_or("Base case pod not found after generation")?;
 
             serde_json::from_str::<pod2::frontend::MainPod>(&base_pod_json)
-                .map_err(|e| format!("Failed to parse base case main pod: {}", e))?
+                .map_err(|e| format!("Failed to parse base case main pod: {e}"))?
         }
     };
 
@@ -349,12 +339,12 @@ async fn generate_inductive_upvote_pod(
     let predicate_str = podnet_models::get_upvote_verification_predicate();
     let params = state.pod_config.get_params();
     let batch = pod2::lang::parse(&predicate_str, &params, &[])
-        .map_err(|e| format!("Failed to parse predicate: {}", e))?;
+        .map_err(|e| format!("Failed to parse predicate: {e}"))?;
 
     let (vd_set, prover) = state
         .pod_config
         .get_prover_setup()
-        .map_err(|e| format!("Failed to get prover setup: {:?}", e))?;
+        .map_err(|e| format!("Failed to get prover setup: {e:?}"))?;
 
     let upvote_count_ind = batch
         .custom_batch
@@ -367,8 +357,7 @@ async fn generate_inductive_upvote_pod(
 
     // Build inductive case main pod (count = previous_count + 1)
     log::info!(
-        "Building inductive upvote count pod (count={})...",
-        current_count
+        "Building inductive upvote count pod (count={current_count})..."
     );
     let mut ind_builder = MainPodBuilder::new(&params, vd_set);
 
@@ -415,24 +404,20 @@ async fn generate_inductive_upvote_pod(
     let main_pod = ind_builder.prove(&*prover, &params)?;
     main_pod.pod.verify()?;
     log::info!(
-        "✓ Successfully proved upvote_count({}) for document {}",
-        current_count,
-        document_id
+        "✓ Successfully proved upvote_count({current_count}) for document {document_id}"
     );
 
     // Store the pod in the database
     let pod_json = serde_json::to_string(&main_pod)
-        .map_err(|e| format!("Failed to serialize main pod: {}", e))?;
+        .map_err(|e| format!("Failed to serialize main pod: {e}"))?;
 
     state
         .db
         .update_upvote_count_pod(document_id, &pod_json)
-        .map_err(|e| format!("Failed to store upvote count pod: {}", e))?;
+        .map_err(|e| format!("Failed to store upvote count pod: {e}"))?;
 
     log::info!(
-        "✓ Stored inductive upvote count pod for document {} (count={})",
-        document_id,
-        current_count
+        "✓ Stored inductive upvote count pod for document {document_id} (count={current_count})"
     );
 
     Ok(())

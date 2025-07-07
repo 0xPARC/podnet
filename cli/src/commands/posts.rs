@@ -1,4 +1,4 @@
-use crate::utils::{handle_error_response, extract_document_metadata, get_server_public_key, truncate_pod_json};
+use crate::utils::{handle_error_response, extract_document_metadata, truncate_pod_json};
 
 pub async fn get_post_by_id(post_id: &str, server_url: &str) -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();

@@ -369,8 +369,7 @@ pub mod mainpod {
             .iter()
             .find_map(|v| {
                 println!(
-                    "GOT V: {:?}\n\n want {:?}\n\n\n",
-                    v, publish_verification_pred
+                    "GOT V: {v:?}\n\n want {publish_verification_pred:?}\n\n\n"
                 );
                 match v {
                     Statement::Custom(pred, args) if *pred == publish_verification_pred => {
@@ -395,16 +394,14 @@ pub mod mainpod {
         // Verify extracted data matches expected values
         if username != expected_username {
             return Err(format!(
-                "Username mismatch: expected {}, got {}",
-                expected_username, username
+                "Username mismatch: expected {expected_username}, got {username}"
             )
             .into());
         }
 
         if &content_hash != expected_content_hash {
             return Err(format!(
-                "Content hash mismatch: expected {}, got {}",
-                expected_content_hash, content_hash
+                "Content hash mismatch: expected {expected_content_hash}, got {content_hash}"
             )
             .into());
         }

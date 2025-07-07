@@ -27,7 +27,7 @@ async fn get_document_from_db(
 ) -> Result<Document, StatusCode> {
     let document = state
         .db
-        .get_document(document_id, &*state.storage)
+        .get_document(document_id, &state.storage)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
@@ -172,10 +172,7 @@ pub async fn publish_document(
     })?;
 
     log::info!(
-        "✓ Extracted public data: username={}, content_hash={}, post_id={}",
-        username,
-        content_hash,
-        post_id
+        "✓ Extracted public data: username={username}, content_hash={content_hash}, post_id={post_id}"
     );
 
     // Verify the identity server public key is registered in our database
@@ -216,9 +213,7 @@ pub async fn publish_document(
     // Verify content hash matches what's in the main pod
     if stored_content_hash != content_hash {
         log::error!(
-            "Content hash mismatch: stored={} vs main_pod={}",
-            stored_content_hash,
-            content_hash
+            "Content hash mismatch: stored={stored_content_hash} vs main_pod={content_hash}"
         );
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -260,8 +255,8 @@ pub async fn publish_document(
             &content_hash,
             final_post_id,
             &payload.main_pod,
-            &username,
-            &*state.storage,
+            username,
+            &state.storage,
         )
         .map_err(|e| {
             log::error!("Failed to create document: {e}");
@@ -272,7 +267,7 @@ pub async fn publish_document(
     // Spawn background task to generate base case upvote count pod
     if let Some(document_id) = document.metadata.id {
         let state_clone = state.clone();
-        let content_hash = document.metadata.content_id.clone();
+        let content_hash = document.metadata.content_id;
         let post_id = document.metadata.post_id;
 
         tokio::spawn(async move {
@@ -284,9 +279,7 @@ pub async fn publish_document(
             .await
             {
                 log::error!(
-                    "Failed to generate base case upvote count pod for document {}: {}",
-                    document_id,
-                    e
+                    "Failed to generate base case upvote count pod for document {document_id}: {e}"
                 );
             }
         });

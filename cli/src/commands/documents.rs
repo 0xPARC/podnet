@@ -1,8 +1,6 @@
 use crate::utils::{
-    extract_document_metadata, get_server_public_key, handle_error_response, truncate_pod_json,
+    extract_document_metadata, handle_error_response, truncate_pod_json,
 };
-use crate::verification::verify_timestamp_pod_signature;
-use podnet_models::mainpod::verify_publish_verification_main_pod;
 
 pub async fn get_document_by_id(
     document_id: &str,

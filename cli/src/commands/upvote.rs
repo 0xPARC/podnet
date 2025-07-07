@@ -24,8 +24,7 @@ pub async fn upvote_document(
     use_mock: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!(
-        "Upvoting document {} on server {} using main pod verification...",
-        document_id, server_url
+        "Upvoting document {document_id} on server {server_url} using main pod verification..."
     );
 
     // Parse document ID
@@ -33,8 +32,7 @@ pub async fn upvote_document(
 
     // First, get the document to retrieve its content hash and post ID
     println!(
-        "Retrieving document {} to get content hash and post ID...",
-        doc_id
+        "Retrieving document {doc_id} to get content hash and post ID..."
     );
     let client = reqwest::Client::new();
     let response = client
@@ -53,16 +51,16 @@ pub async fn upvote_document(
     let content_hash = document
         .pointer("/metadata/content_id")
         .and_then(|v| v.as_str())
-        .map(|v| Hash::from_hex(v))
-        .ok_or_else(|| "Document missing metadata.content_id field")??;
+        .map(Hash::from_hex)
+        .ok_or("Document missing metadata.content_id field")??;
 
     let post_id = document
         .pointer("/metadata/post_id")
         .and_then(|v| v.as_i64())
         .ok_or("Document missing metadata.post_id field")?;
 
-    println!("Document content hash: {}", content_hash);
-    println!("Document post ID: {}", post_id);
+    println!("Document content hash: {content_hash}");
+    println!("Document post ID: {post_id}");
 
     // Load and verify identity pod
     println!("Loading identity pod from: {identity_pod_file}");
@@ -96,7 +94,7 @@ pub async fn upvote_document(
     upvote_builder.insert("timestamp", Utc::now().timestamp());
 
     let upvote_pod = upvote_builder.sign(&mut Signer(secret_key))?;
-    println!("UPVOTE POD: {}", upvote_pod);
+    println!("UPVOTE POD: {upvote_pod}");
     println!("✓ Upvote pod signed successfully");
 
     // Verify the upvote pod
@@ -110,7 +108,7 @@ pub async fn upvote_document(
         .ok_or("Identity pod missing username")?
         .to_string();
 
-    println!("Username: {}", username);
+    println!("Username: {username}");
 
     // Get identity server public key from identity pod
     let identity_server_pk = identity_pod
@@ -147,7 +145,7 @@ pub async fn upvote_document(
         println!("✓ Successfully upvoted document using main pod verification!");
 
         if let Some(upvote_count) = result.get("upvote_count").and_then(|v| v.as_i64()) {
-            println!("Document now has {} upvotes", upvote_count);
+            println!("Document now has {upvote_count} upvotes");
         }
 
         println!(
@@ -201,7 +199,7 @@ fn create_upvote_verification_main_pod(
 
     // Get predicate definition from shared models
     let predicate_input = get_upvote_verification_predicate();
-    println!("upvote predicate is: {}", predicate_input);
+    println!("upvote predicate is: {predicate_input}");
 
     println!("Parsing custom predicates...");
     let batch = parse(&predicate_input, &params, &[])?.custom_batch;

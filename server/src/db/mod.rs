@@ -1,7 +1,7 @@
 use hex::{FromHex, ToHex};
 use pod2::frontend::{MainPod, SignedPod};
 use pod2::middleware::Hash;
-use podnet_models::{Document, DocumentMetadata, IdentityServer, Post, RawDocument, Upvote, User};
+use podnet_models::{Document, DocumentMetadata, IdentityServer, Post, RawDocument, Upvote};
 use rusqlite::{Connection, OptionalExtension, Result};
 use std::sync::Mutex;
 
@@ -175,7 +175,7 @@ impl Database {
         // Create timestamp pod with document_id and post_id
         let timestamp_pod =
             crate::pod::create_timestamp_pod_for_main_pod(pod, post_id, document_id)
-                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e))?;
+                .map_err(rusqlite::Error::ToSqlConversionFailure)?;
 
         let timestamp_pod_json = serde_json::to_string(&timestamp_pod)
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
@@ -622,7 +622,7 @@ impl Database {
         match result {
             Ok(pod) => Ok(pod),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
+            Err(e) => Err(e),
         }
     }
 }

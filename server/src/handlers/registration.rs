@@ -23,7 +23,7 @@ pub async fn request_identity_challenge(
     // Generate a secure random challenge
     let challenge: String = (0..32)
         .map(|_| rand::rng().random::<u8>())
-        .map(|b| format!("{:02x}", b))
+        .map(|b| format!("{b:02x}"))
         .collect();
 
     // Create expiration timestamp (5 minutes from now)
@@ -35,7 +35,7 @@ pub async fn request_identity_challenge(
         payload.server_id,
         challenge
     );
-    log::info!("Challenge expires at: {}", expires_at_str);
+    log::info!("Challenge expires at: {expires_at_str}");
 
     // Create challenge pod signed by server
     let params = Params::default();
@@ -192,31 +192,30 @@ pub async fn register_identity_server(
     }
 
     log::info!(
-        "✓ All verifications passed for identity server: {}",
-        server_id
+        "✓ All verifications passed for identity server: {server_id}"
     );
 
     // Check if identity server already exists
     if let Ok(Some(_)) = state.db.get_identity_server_by_id(server_id) {
-        log::warn!("Identity server {} already exists", server_id);
+        log::warn!("Identity server {server_id} already exists");
         return Err(StatusCode::CONFLICT);
     }
 
     let pk_string = serde_json::to_string(&identity_server_public_key).map_err(|e| {
-        log::error!("Unable to serialize identity server public key: {}", e);
+        log::error!("Unable to serialize identity server public key: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
     // Store both the server's challenge pod and identity server's response pod
     let challenge_pod_string =
         serde_json::to_string(&payload.server_challenge_pod).map_err(|e| {
-            log::error!("Unable to serialize challenge pod: {}", e);
+            log::error!("Unable to serialize challenge pod: {e}");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
     let identity_pod_string =
         serde_json::to_string(&payload.identity_response_pod).map_err(|e| {
-            log::error!("Unable to serialize identity pod: {}", e);
+            log::error!("Unable to serialize identity pod: {e}");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
@@ -225,11 +224,11 @@ pub async fn register_identity_server(
         .db
         .create_identity_server(server_id, &pk_string, &challenge_pod_string, &identity_pod_string)
         .map_err(|e| {
-            log::error!("Failed to create identity server {}: {}", server_id, e);
+            log::error!("Failed to create identity server {server_id}: {e}");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    log::info!("Identity server {} registered successfully", server_id);
+    log::info!("Identity server {server_id} registered successfully");
 
     // Return server info
     let server_pk = crate::pod::get_server_public_key();

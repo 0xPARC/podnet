@@ -36,8 +36,8 @@ pub async fn get_identity(
     output_file: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("Getting identity from identity server...");
-    println!("Username: {}", username);
-    println!("Identity Server: {}", identity_server_url);
+    println!("Username: {username}");
+    println!("Identity Server: {identity_server_url}");
 
     // Load keypair from file
     let file = File::open(keypair_file)?;
@@ -55,7 +55,7 @@ pub async fn get_identity(
 
     let client = reqwest::Client::new();
     let challenge_response = client
-        .post(format!("{}/user/challenge", identity_server_url))
+        .post(format!("{identity_server_url}/user/challenge"))
         .header("Content-Type", "application/json")
         .json(&challenge_request)
         .send()
@@ -80,7 +80,7 @@ pub async fn get_identity(
         .and_then(|v| v.as_str())
         .ok_or("Challenge pod missing challenge field")?;
     
-    println!("Challenge: {}", challenge);
+    println!("Challenge: {challenge}");
 
     // Step 2: Sign the challenge and send back to get identity pod
     println!("Signing challenge response...");
@@ -118,7 +118,7 @@ pub async fn get_identity(
     println!("User response pod created: ✓");
 
     let identity_response = client
-        .post(format!("{}/identity", identity_server_url))
+        .post(format!("{identity_server_url}/identity"))
         .header("Content-Type", "application/json")
         .json(&identity_request)
         .send()
@@ -141,13 +141,13 @@ pub async fn get_identity(
     let identity_json = serde_json::to_string_pretty(&identity_data.identity_pod)?;
     std::fs::write(output_file, identity_json)?;
 
-    println!("✓ Identity pod saved to: {}", output_file);
+    println!("✓ Identity pod saved to: {output_file}");
     println!("✓ Identity acquired successfully!");
-    println!("Username: {}", username);
+    println!("Username: {username}");
     
     // Display server_id if available
     if let Some(server_id) = server_id {
-        println!("Identity Server: {}", server_id);
+        println!("Identity Server: {server_id}");
     }
 
     Ok(())

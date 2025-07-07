@@ -113,7 +113,7 @@ fn latex_to_markdown(latex_content: &str) -> Result<String, Box<dyn std::error::
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("pandoc conversion failed: {}", stderr).into());
+        return Err(format!("pandoc conversion failed: {stderr}").into());
     }
 
     let markdown = String::from_utf8(output.stdout)?;
@@ -124,8 +124,7 @@ fn latex_to_markdown(latex_content: &str) -> Result<String, Box<dyn std::error::
 fn typst_to_markdown(typst_content: &str) -> Result<String, Box<dyn std::error::Error>> {
     // For now, return a placeholder indicating Typst conversion isn't fully supported
     let markdown = format!(
-        "# Document converted from Typst\n\n> **Note**: This document was originally written in Typst. Full conversion to Markdown is not yet supported.\n\n```typst\n{}\n```",
-        typst_content
+        "# Document converted from Typst\n\n> **Note**: This document was originally written in Typst. Full conversion to Markdown is not yet supported.\n\n```typst\n{typst_content}\n```"
     );
     Ok(markdown)
 }

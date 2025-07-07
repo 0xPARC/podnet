@@ -139,7 +139,7 @@ async fn request_user_challenge(
     // Generate a secure random challenge
     let challenge: String = (0..32)
         .map(|_| rand::rng().random::<u8>())
-        .map(|b| format!("{:02x}", b))
+        .map(|b| format!("{b:02x}"))
         .collect();
 
     // Create expiration timestamp (5 minutes from now)
@@ -347,7 +347,7 @@ async fn register_with_podnet_server(
     };
 
     let challenge_response = client
-        .post(format!("{}/identity/challenge", podnet_server_url))
+        .post(format!("{podnet_server_url}/identity/challenge"))
         .header("Content-Type", "application/json")
         .json(&challenge_request)
         .send()
@@ -356,7 +356,7 @@ async fn register_with_podnet_server(
     if !challenge_response.status().is_success() {
         let status = challenge_response.status();
         let error_text = challenge_response.text().await?;
-        return Err(format!("Failed to get challenge. Status: {} - {}", status, error_text).into());
+        return Err(format!("Failed to get challenge. Status: {status} - {error_text}").into());
     }
 
     let challenge_response: IdentityServerChallengeResponse = challenge_response.json().await?;
@@ -395,7 +395,7 @@ async fn register_with_podnet_server(
     };
 
     let registration_response = client
-        .post(format!("{}/identity/register", podnet_server_url))
+        .post(format!("{podnet_server_url}/identity/register"))
         .header("Content-Type", "application/json")
         .json(&registration_request)
         .send()
@@ -416,7 +416,7 @@ async fn register_with_podnet_server(
         } else {
             tracing::error!("Failed to register with podnet-server. Status: {}", status);
             tracing::error!("Error: {}", error_text);
-            Err(format!("Registration failed: {} - {}", status, error_text).into())
+            Err(format!("Registration failed: {status} - {error_text}").into())
         }
     }
 }

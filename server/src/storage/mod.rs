@@ -1,9 +1,5 @@
 use anyhow::Result;
 use hex::ToHex;
-use plonky2::field::goldilocks_field::GoldilocksField;
-use plonky2::field::types::{Field, PrimeField64};
-use plonky2::hash::poseidon::PoseidonHash;
-use plonky2::plonk::config::Hasher;
 use pod2::middleware::{Hash, Value, hash_values};
 use std::fs;
 use std::path::PathBuf;

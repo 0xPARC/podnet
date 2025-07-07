@@ -1,7 +1,6 @@
 use pod2::backends::plonky2::primitives::ec::curve::Point as PublicKey;
-use pod2::frontend::MainPod;
 use pod2::middleware::{
-    Hash, KEY_SIGNER, KEY_TYPE, PodId, PodType, RawValue, TypedValue, Value, containers::Array,
+    Hash, PodId, RawValue, TypedValue, Value, containers::Array,
     containers::Dictionary, containers::Set,
 };
 

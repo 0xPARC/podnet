@@ -2,18 +2,12 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Default)]
 pub struct ServerConfig {
     /// Whether to use mock proofs instead of real ZK proofs for faster development
     pub mock_proofs: bool,
 }
 
-impl Default for ServerConfig {
-    fn default() -> Self {
-        Self {
-            mock_proofs: false,
-        }
-    }
-}
 
 impl ServerConfig {
     /// Load configuration from a TOML file
