@@ -183,36 +183,14 @@ pub fn verify_upvote_count(
     // Verify basic MainPod structure
     verify_mainpod_basics(main_pod)?;
 
-    let params = PodNetProverSetup::get_params();
-    let predicate_input = get_upvote_count_predicate();
-    let batch = parse(&predicate_input, &params, &[])
-        .map_err(|e| MainPodError::Verification(format!("Predicate parsing failed: {e}")))?
-        .custom_batch;
-
-    let upvote_count_pred = batch
-        .predicate_ref_by_name("upvote_count")
-        .ok_or_else(|| MainPodError::Verification("Missing upvote_count predicate".to_string()))?;
-
-    // Find the upvote count statement in public statements
-    let upvote_count_args = main_pod
-        .public_statements
-        .iter()
-        .find_map(|stmt| match stmt {
-            Statement::Custom(pred, args) if *pred == upvote_count_pred => Some(args),
-            _ => None,
-        })
-        .ok_or_else(|| {
-            MainPodError::Verification("MainPod missing upvote_count statement".to_string())
-        })?;
-
-    // Extract and verify public data
-    let count = upvote_count_args[0].as_i64().ok_or_else(|| {
-        MainPodError::Verification("upvote_count missing count argument".to_string())
-    })?;
-
-    let content_hash = upvote_count_args[1].as_hash().ok_or_else(|| {
-        MainPodError::Verification("upvote_count missing content_hash argument".to_string())
-    })?;
+    // Extract arguments with the macro
+    let (count, content_hash) = crate::extract_mainpod_args!(
+        main_pod,
+        get_upvote_count_predicate(),
+        "upvote_count",
+        count: as_i64,
+        content_hash: as_hash
+    )?;
 
     // Verify extracted data matches expected values
     if count != expected_count {

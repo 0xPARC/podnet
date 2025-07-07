@@ -3,8 +3,8 @@ members = [
     "cli",
     "server", 
     "utils",
-    "identity-providers/strawman"
-, "models"]
+    "identity-providers/strawman",
+    "models"]
 resolver = "2"
 
 # Only dependencies shared across multiple workspace members

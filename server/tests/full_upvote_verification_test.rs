@@ -82,9 +82,6 @@ fn run_full_test() -> Result<(), Box<dyn std::error::Error>> {
         &identity_pod,
         &upvote_pod,
         &identity_server_pk,
-        username,
-        &content_hash,
-        post_id,
     )?;
     println!("✓ Combined verification MainPod created and verified");
 
@@ -101,15 +98,7 @@ fn run_full_test() -> Result<(), Box<dyn std::error::Error>> {
 
     // Step 7: Create inductive proof (this is where we expect it to fail)
     println!("\n--- Step 7: Creating Inductive Upvote Count Proof ---");
-    match build_inductive_proof(
-        &base_case_main_pod,
-        &combined_verification_main_pod,
-        username,
-        &content_hash,
-        &identity_server_pk,
-        post_id,
-        1,
-    ) {
+    match build_inductive_proof(&base_case_main_pod, &combined_verification_main_pod, 1) {
         Ok(inductive_pod) => {
             println!("✓ Inductive proof succeeded!");
             println!("Inductive pod: {:?}", inductive_pod);
@@ -328,9 +317,6 @@ fn build_combined_verification_main_pod(
     identity_pod: &SignedPod,
     upvote_pod: &SignedPod,
     identity_server_pk: &Point,
-    username: &str,
-    content_hash: &Hash,
-    post_id: i64,
 ) -> Result<MainPod, Box<dyn std::error::Error>> {
     let mut params = Params::default();
     params.max_custom_batch_size = 10;
@@ -474,7 +460,6 @@ fn build_base_case_proof(
     // Prove
     let main_pod = builder.prove(&mock_prover, &params)?;
     main_pod.pod.verify()?;
-    println!("MAIN POD: {}", main_pod);
 
     Ok(main_pod)
 }
@@ -482,10 +467,6 @@ fn build_base_case_proof(
 fn build_inductive_proof(
     base_case_pod: &MainPod,
     upvote_verification_pod: &MainPod,
-    username: &str,
-    content_hash: &Hash,
-    identity_server_pk: &Point,
-    post_id: i64,
     current_count: i64,
 ) -> Result<MainPod, Box<dyn std::error::Error>> {
     let mut params = Params::default();

@@ -151,22 +151,6 @@ pub async fn list_documents(server_url: &str) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-fn print_document_metadata(
-    content_id: &str,
-    created_at: &str,
-    post_id: i64,
-    revision: i64,
-    upvote_count: i64,
-) {
-    println!("Document Metadata:");
-    println!("  Content ID: {content_id}");
-    println!("  Post ID: {post_id}");
-    println!("  Revision: {revision}");
-    println!("  Created: {created_at}");
-    println!("  Upvotes: {upvote_count}");
-    println!();
-}
-
 fn print_document_row(document: &serde_json::Value) {
     let id = document.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
     let content_id = document

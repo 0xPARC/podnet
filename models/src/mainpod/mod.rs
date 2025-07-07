@@ -133,6 +133,65 @@ pub fn verify_mainpod_basics(main_pod: &MainPod) -> MainPodResult<()> {
     })
 }
 
+/// Macro to extract typed arguments from a MainPod's public statements
+///
+/// Usage:
+/// ```rust
+/// let (username, content_hash, identity_server_pk, post_id, tags) = extract_mainpod_args!(
+///     main_pod,
+///     get_publish_verification_predicate(),
+///     "publish_verification",
+///     username: as_str,
+///     content_hash: as_hash,
+///     identity_server_pk: as_public_key,
+///     post_id: as_i64,
+///     tags: as_set
+/// )?;
+/// ```
+#[macro_export]
+macro_rules! extract_mainpod_args {
+    ($main_pod:expr, $predicate:expr, $statement_name:expr, $($arg_name:ident: $arg_type:ident),* $(,)?) => {{
+        use pod2::lang::parse;
+        use pod2::middleware::Statement;
+        use pod_utils::prover_setup::PodNetProverSetup;
+
+        // Parse predicate and get reference
+        let params = PodNetProverSetup::get_params();
+        let predicate_input = $predicate;
+        let batch = parse(&predicate_input, &params, &[])
+            .map_err(|e| $crate::mainpod::MainPodError::Verification(format!("Predicate parsing failed: {}", e)))?
+            .custom_batch;
+
+        let predicate_ref = batch
+            .predicate_ref_by_name($statement_name)
+            .ok_or_else(|| $crate::mainpod::MainPodError::Verification(format!("Missing {} predicate", $statement_name)))?;
+
+        // Extract statement arguments
+        let args = $main_pod
+            .public_statements
+            .iter()
+            .find_map(|stmt| match stmt {
+                Statement::Custom(pred, args) if *pred == predicate_ref => Some(args.as_slice()),
+                _ => None,
+            })
+            .ok_or_else(|| {
+                $crate::mainpod::MainPodError::Verification(format!("MainPod missing {} statement", $statement_name))
+            })?;
+
+        // Extract typed arguments
+        let mut index = 0;
+        $(
+            let $arg_name = args.get(index)
+                .ok_or_else(|| $crate::mainpod::MainPodError::Verification(format!("{} missing argument at index {}", $statement_name, index)))?
+                .$arg_type()
+                .ok_or_else(|| $crate::mainpod::MainPodError::Verification(format!("{} argument '{}' has wrong type", $statement_name, stringify!($arg_name))))?;
+            index += 1;
+        )*
+
+        Ok(($($arg_name,)*))
+    }};
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

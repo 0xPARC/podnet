@@ -64,7 +64,7 @@ pub struct DocumentMetadata {
     /// the canonical ordering of document creation.
     pub timestamp_pod: SignedPod,
     pub uploader_id: String, // Username of the uploader
-    pub upvote_count: i64, // Number of upvotes for this document
+    pub upvote_count: i64,   // Number of upvotes for this document
     /// MainPod that cryptographically proves the upvote count is correct
     /// Proves: upvote_count(N, content_hash, post_id) where N is the actual count
     /// Uses recursive proofs starting from base case (count=0) and building up
@@ -82,7 +82,7 @@ pub struct Document {
 #[derive(Debug, Deserialize)]
 pub struct PublishRequest {
     pub content: String,
-    pub tags: HashSet<String>, // Set of tags for document organization
+    pub tags: HashSet<String>,    // Set of tags for document organization
     pub authors: HashSet<String>, // Set of authors for document attribution
     /// MainPod that cryptographically proves the user's identity and document authenticity:
     ///

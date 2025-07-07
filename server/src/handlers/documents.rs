@@ -100,7 +100,6 @@ pub async fn get_rendered_document_by_id(
     Ok(Json(document))
 }
 
-#[axum::debug_handler]
 pub async fn publish_document(
     State(state): State<Arc<crate::AppState>>,
     Json(payload): Json<PublishRequest>,
@@ -270,7 +269,6 @@ pub async fn publish_document(
     if let Some(document_id) = document.metadata.id {
         let state_clone = state.clone();
         let content_hash = document.metadata.content_id;
-        let post_id = document.metadata.post_id;
 
         tokio::spawn(async move {
             if let Err(e) = super::upvotes::generate_base_case_upvote_pod(

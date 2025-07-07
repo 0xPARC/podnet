@@ -150,38 +150,15 @@ pub fn verify_upvote_verification(
     // Verify basic MainPod structure
     verify_mainpod_basics(main_pod)?;
 
-    let params = PodNetProverSetup::get_params();
-    let predicate_input = get_upvote_verification_predicate();
-    let batch = parse(&predicate_input, &params, &[])
-        .map_err(|e| MainPodError::Verification(format!("Predicate parsing failed: {e}")))?
-        .custom_batch;
-    
-    let upvote_verification_pred = batch.predicate_ref_by_name("upvote_verification")
-        .ok_or_else(|| MainPodError::Verification("Missing upvote_verification predicate".to_string()))?;
-
-    // Find the upvote verification statement in public statements
-    let upvote_verification_args = main_pod
-        .public_statements
-        .iter()
-        .find_map(|stmt| match stmt {
-            Statement::Custom(pred, args) if *pred == upvote_verification_pred => Some(args),
-            _ => None,
-        })
-        .ok_or_else(|| MainPodError::Verification("MainPod missing upvote_verification statement".to_string()))?;
-
-    // Extract and verify public data (this will depend on the specific predicate structure)
-    // Note: The exact argument structure may vary based on the upvote verification predicate implementation
-    let username = upvote_verification_args[0]
-        .as_str()
-        .ok_or_else(|| MainPodError::Verification("upvote_verification missing username argument".to_string()))?;
-    
-    let content_hash = upvote_verification_args[1]
-        .as_hash()
-        .ok_or_else(|| MainPodError::Verification("upvote_verification missing content_hash argument".to_string()))?;
-    
-    let _identity_server_pk = upvote_verification_args[2]
-        .as_public_key()
-        .ok_or_else(|| MainPodError::Verification("upvote_verification missing identity_server_pk argument".to_string()))?;
+    // Extract arguments with the macro
+    let (username, content_hash, _identity_server_pk) = crate::extract_mainpod_args!(
+        main_pod,
+        get_upvote_verification_predicate(),
+        "upvote_verification",
+        username: as_str,
+        content_hash: as_hash,
+        identity_server_pk: as_public_key
+    )?;
 
     // Verify extracted data matches expected values
     if username != expected_username {

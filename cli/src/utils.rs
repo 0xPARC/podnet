@@ -22,13 +22,6 @@ pub fn extract_document_metadata(document: &serde_json::Value) -> (String, Strin
     (content_id, created_at, post_id, revision)
 }
 
-pub fn print_document_metadata(content_id: &str, created_at: &str, post_id: i64, revision: i64) {
-    println!("Document ID: {content_id}");
-    println!("Post ID: {post_id}");
-    println!("Revision: {revision}");
-    println!("Created: {created_at}");
-}
-
 pub fn handle_error_response(status: reqwest::StatusCode, error_text: &str, operation: &str) {
     println!("Failed to {operation}. Status: {status}");
     println!("Error: {error_text}");
@@ -61,3 +54,4 @@ pub async fn get_server_public_key(server_url: &str) -> Result<String, Box<dyn s
         Err("Failed to get server info".into())
     }
 }
+

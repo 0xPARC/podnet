@@ -73,14 +73,3 @@ pub fn mock_arg() -> Arg {
         .long("mock")
         .action(clap::ArgAction::SetTrue)
 }
-
-pub fn get_content_from_args(matches: &clap::ArgMatches) -> Result<String, Box<dyn std::error::Error>> {
-    if let Some(content) = matches.get_one::<String>("content") {
-        Ok(content.clone())
-    } else if let Some(file_path) = matches.get_one::<String>("file") {
-        let content = std::fs::read_to_string(file_path)?;
-        Ok(content)
-    } else {
-        Err("Either --content or --file must be provided".into())
-    }
-}

@@ -229,54 +229,17 @@ pub fn verify_publish_verification(
     // Verify basic MainPod structure
     verify_mainpod_basics(main_pod)?;
 
-    let params = PodNetProverSetup::get_params();
-    let predicate_input = get_publish_verification_predicate();
-    let batch = parse(&predicate_input, &params, &[])
-        .map_err(|e| MainPodError::Verification(format!("Predicate parsing failed: {e}")))?
-        .custom_batch;
-
-    let publish_verification_pred = batch
-        .predicate_ref_by_name("publish_verification")
-        .ok_or_else(|| {
-            MainPodError::Verification("Missing publish_verification predicate".to_string())
-        })?;
-
-    // Find the publish verification statement in public statements
-    let publish_verification_args = main_pod
-        .public_statements
-        .iter()
-        .find_map(|stmt| match stmt {
-            Statement::Custom(pred, args) if *pred == publish_verification_pred => Some(args),
-            _ => None,
-        })
-        .ok_or_else(|| {
-            MainPodError::Verification("MainPod missing publish_verification statement".to_string())
-        })?;
-
-    // Extract and verify public data
-    let username = publish_verification_args[0].as_str().ok_or_else(|| {
-        MainPodError::Verification("publish_verification missing username argument".to_string())
-    })?;
-
-    let content_hash = publish_verification_args[1].as_hash().ok_or_else(|| {
-        MainPodError::Verification("publish_verification missing content_hash argument".to_string())
-    })?;
-
-    let _identity_server_pk = publish_verification_args[2]
-        .as_public_key()
-        .ok_or_else(|| {
-            MainPodError::Verification(
-                "publish_verification missing identity_server_pk argument".to_string(),
-            )
-        })?;
-
-    let post_id = publish_verification_args[3].as_i64().ok_or_else(|| {
-        MainPodError::Verification("publish_verification missing post_id argument".to_string())
-    })?;
-
-    let tags = publish_verification_args[4].as_set().ok_or_else(|| {
-        MainPodError::Verification("publish_verification missing tags argument".to_string())
-    })?;
+    // Extract all arguments in one macro call
+    let (username, content_hash, _identity_server_pk, post_id, tags) = crate::extract_mainpod_args!(
+        main_pod,
+        get_publish_verification_predicate(),
+        "publish_verification",
+        username: as_str,
+        content_hash: as_hash,
+        identity_server_pk: as_public_key,
+        post_id: as_i64,
+        tags: as_set
+    )?;
 
     // Verify extracted data matches expected values
     if username != expected_username {
@@ -290,6 +253,13 @@ pub fn verify_publish_verification(
         return Err(MainPodError::InvalidValue {
             field: "content_hash",
             expected: "matching content hash".to_string(),
+        });
+    }
+
+    if post_id != expected_post_id {
+        return Err(MainPodError::InvalidValue {
+            field: "post_id",
+            expected: expected_post_id.to_string(),
         });
     }
 
