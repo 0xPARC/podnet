@@ -5,23 +5,8 @@ mod utils;
 mod verification;
 
 use clap::{Arg, Command};
-use num_bigint::BigUint;
 use hex::ToHex;
-use plonky2::field::goldilocks_field::GoldilocksField;
-use plonky2::field::types::{Field, PrimeField64};
-use plonky2::hash::poseidon::PoseidonHash;
-use plonky2::plonk::config::Hasher;
-use pod2::backends::plonky2::{
-    basetypes::DEFAULT_VD_SET, mainpod::Prover, mock::mainpod::MockProver,
-    primitives::ec::schnorr::SecretKey, signedpod::Signer,
-};
-use pod2::frontend::{MainPod, MainPodBuilder, SignedPod, SignedPodBuilder};
-use pod2::lang::parse;
-use pod2::middleware::{Params, PodProver, PodType, KEY_SIGNER, KEY_TYPE};
-use pod2::op;
-use pod_utils::ValueExt;
-use podnet_models::{get_publish_verification_predicate, mainpod::publish::verify_publish_verification, mainpod::upvote_count::verify_upvote_count};
-use std::fs::File;
+use podnet_models::{mainpod::publish::verify_publish_verification, mainpod::upvote_count::verify_upvote_count};
 
 use cli::*;
 use commands::{keygen, identity, documents, posts, publish, upvote};
@@ -582,7 +567,7 @@ async fn view_post_in_browser(
     let mut embedded_documents = String::new();
 
     if document_data.len() > 1 {
-        for (i, (doc_id, doc_revision, content_id, doc_created, username, html_content, upvote_count, tags, authors)) in
+        for (i, (doc_id, doc_revision, content_id, doc_created, username, html_content, upvote_count, _, _)) in
             document_data.iter().enumerate()
         {
             let is_current = i == 0; // First item is the latest
@@ -612,7 +597,7 @@ async fn view_post_in_browser(
             ));
         }
     } else {
-        let (doc_id, doc_revision, content_id, doc_created, username, html_content, upvote_count, _tags, authors) =
+        let (doc_id, doc_revision, content_id, doc_created, username, html_content, upvote_count, _tags, _authors) =
             &document_data[0];
         revision_links.push_str(&format!(
             r#"<div style="padding: 10px; color: #666; font-style: italic;">

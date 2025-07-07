@@ -1,3 +1,5 @@
+#![feature(stmt_expr_attributes)]
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -379,13 +381,12 @@ pub mod mainpod;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pod_utils::ValueExt;
     use pod2::backends::plonky2::{
         basetypes::DEFAULT_VD_SET, mainpod::Prover, mock::mainpod::MockProver,
     };
     use pod2::frontend::MainPodBuilder;
     use pod2::lang::parse;
-    use pod2::middleware::{Params, PodProver, Statement};
+    use pod2::middleware::{Params, PodProver};
     use pod2::op;
 
     #[tokio::test]
@@ -406,7 +407,7 @@ mod tests {
 
         // Get the upvote count predicate
         let predicate_input = get_upvote_verification_predicate();
-        println!("Upvote count predicate:\n{}", predicate_input);
+        println!("Upvote count predicate:\n{predicate_input}");
 
         // Parse the predicate
         let batch = parse(&predicate_input, &params, &[]).unwrap().custom_batch;
@@ -448,7 +449,6 @@ mod tests {
                 sum_of_stmt
             ))
             .unwrap();
-        let dummy_stmt = builder_1.priv_op(op!(eq, 0, 0)).unwrap();
         let _count_stmt = builder_1
             .pub_op(op!(
                 custom,

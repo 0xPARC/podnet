@@ -104,13 +104,10 @@ pub async fn publish_document(
     State(state): State<Arc<crate::AppState>>,
     Json(payload): Json<PublishRequest>,
 ) -> Result<Json<Document>, StatusCode> {
-    use pod2::lang::parse;
-    use pod2::middleware::Statement;
 
     log::info!("Starting document publish with main pod verification");
     log::debug!("Content length: {} bytes", payload.content.len());
 
-    let params = state.pod_config.get_params();
     let (_vd_set, _prover) = state.pod_config.get_prover_setup()?;
 
     // Verify main pod proof
@@ -121,52 +118,19 @@ pub async fn publish_document(
     })?;
     log::info!("✓ Main pod proof verified");
 
-    // Verify the main pod contains the expected public statements
-    log::info!("Verifying main pod public statements");
-
-    // Get predicate definition from shared pod-utils
-    let predicate_input = get_publish_verification_predicate();
-    log::info!("Publish predicate text is: {predicate_input}");
-
-    log::info!("Parsing custom predicates");
-    let batch = parse(&predicate_input, &params, &[])
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .custom_batch;
-    let publish_verification_pred = batch.predicate_ref_by_name("publish_verification").unwrap();
-
-    let publish_verification_args = payload
-        .main_pod
-        .public_statements
-        .iter()
-        .find_map(|v| match v {
-            Statement::Custom(pred, args) if *pred == publish_verification_pred => Some(args),
-            _ => None,
-        })
-        .ok_or_else(|| {
-            log::error!("Main pod public statements missing publish_verification predicate");
-            StatusCode::BAD_REQUEST
-        })?;
-
-    log::info!("✓ Main pod public statements present");
-
-    // Extract public data directly from main pod
+    // Extract public data using the macro
     log::info!("Extracting public data from main pod");
-    let uploader_username = publish_verification_args[0].as_str().ok_or_else(|| {
-        log::error!("publish_verification predicate missing username argument");
-        StatusCode::BAD_REQUEST
-    })?;
-    let content_hash = publish_verification_args[1].as_hash().ok_or_else(|| {
-        log::error!("publish_verification predicate missing content_hash argument");
-        StatusCode::BAD_REQUEST
-    })?;
-    let identity_server_pk = publish_verification_args[2]
-        .as_public_key()
-        .ok_or_else(|| {
-            log::error!("publish_verification predicate missing identity_server_pk argument");
-            StatusCode::BAD_REQUEST
-        })?;
-    let post_id = publish_verification_args[3].as_i64().ok_or_else(|| {
-        log::error!("publish_verification predicate missing post_id argument");
+    let (uploader_username, content_hash, identity_server_pk, post_id, _tags) = podnet_models::extract_mainpod_args!(
+        &payload.main_pod,
+        get_publish_verification_predicate(),
+        "publish_verification",
+        username: as_str,
+        content_hash: as_hash,
+        identity_server_pk: as_public_key,
+        post_id: as_i64,
+        tags: as_set
+    ).map_err(|e| {
+        log::error!("Failed to extract publish verification arguments: {e}");
         StatusCode::BAD_REQUEST
     })?;
 

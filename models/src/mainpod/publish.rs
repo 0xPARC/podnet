@@ -9,7 +9,7 @@ use pod_utils::ValueExt;
 use pod_utils::prover_setup::PodNetProverSetup;
 use pod2::frontend::{MainPod, MainPodBuilder, SignedPod};
 use pod2::lang::parse;
-use pod2::middleware::{Hash, KEY_SIGNER, KEY_TYPE, PodType, Statement, Value, containers::Set};
+use pod2::middleware::{Hash, KEY_SIGNER, KEY_TYPE, PodType, Value, containers::Set};
 use pod2::op;
 
 use std::collections::HashSet;
@@ -270,7 +270,7 @@ pub fn verify_publish_verification(
             .map(|v| Value::from(v.clone()))
             .collect(),
     )
-    .map_err(|e| MainPodError::InvalidSet { field: "tags" })?;
+    .map_err(|_| MainPodError::InvalidSet { field: "tags" })?;
     if *tags != expected_tags_set {
         return Err(MainPodError::InvalidValue {
             field: "tags",
@@ -283,7 +283,6 @@ pub fn verify_publish_verification(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     // Add unit tests for publish verification functions
 }

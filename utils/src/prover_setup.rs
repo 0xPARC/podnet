@@ -31,17 +31,18 @@ impl PodNetProverSetup {
 
     /// Get default parameters for POD operations
     pub fn get_params() -> Params {
-        let mut params = Params::default();
-        params.max_custom_batch_size = 6;
-        params.max_statement_args = 6;
-        params
+        Params {
+            max_custom_batch_size: 6,
+            max_statement_args: 6,
+            ..Params::default()
+        }
     }
 
     /// Get parameters with custom batch size
     pub fn get_params_with_batch_size(batch_size: usize) -> Params {
-        let mut params = Params::default();
-        params.max_custom_batch_size = batch_size;
-        params
+        Params {
+            max_custom_batch_size: batch_size,
+            ..Params::default()
+        }
     }
 }
-

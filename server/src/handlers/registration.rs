@@ -7,7 +7,7 @@ use podnet_models::{
 use std::sync::Arc;
 
 pub async fn request_identity_challenge(
-    State(state): State<Arc<crate::AppState>>,
+    State(_state): State<Arc<crate::AppState>>,
     Json(payload): Json<IdentityServerChallengeRequest>,
 ) -> Result<Json<IdentityServerChallengeResponse>, StatusCode> {
     use pod2::backends::plonky2::signedpod::Signer;
@@ -191,9 +191,7 @@ pub async fn register_identity_server(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    log::info!(
-        "✓ All verifications passed for identity server: {server_id}"
-    );
+    log::info!("✓ All verifications passed for identity server: {server_id}");
 
     // Check if identity server already exists
     if let Ok(Some(_)) = state.db.get_identity_server_by_id(server_id) {
@@ -222,7 +220,12 @@ pub async fn register_identity_server(
     // Create identity server
     state
         .db
-        .create_identity_server(server_id, &pk_string, &challenge_pod_string, &identity_pod_string)
+        .create_identity_server(
+            server_id,
+            &pk_string,
+            &challenge_pod_string,
+            &identity_pod_string,
+        )
         .map_err(|e| {
             log::error!("Failed to create identity server {server_id}: {e}");
             StatusCode::INTERNAL_SERVER_ERROR
@@ -236,4 +239,3 @@ pub async fn register_identity_server(
         public_key: server_pk,
     }))
 }
-

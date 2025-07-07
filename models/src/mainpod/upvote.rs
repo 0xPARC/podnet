@@ -1,12 +1,14 @@
 //! Upvote verification MainPod operations
 
-use super::{MainPodError, MainPodResult, extract_username, extract_user_public_key, verify_mainpod_basics};
-use crate::{get_upvote_verification_predicate};
-use pod_utils::prover_setup::PodNetProverSetup;
+use super::{
+    MainPodError, MainPodResult, extract_user_public_key, extract_username, verify_mainpod_basics,
+};
+use crate::get_upvote_verification_predicate;
 use pod_utils::ValueExt;
+use pod_utils::prover_setup::PodNetProverSetup;
 use pod2::frontend::{MainPod, MainPodBuilder, SignedPod};
 use pod2::lang::parse;
-use pod2::middleware::{Hash, KEY_SIGNER, KEY_TYPE, PodType, Statement, Value};
+use pod2::middleware::{Hash, KEY_SIGNER, KEY_TYPE, PodType, Value};
 use pod2::op;
 
 /// Parameters for upvote verification proof generation
@@ -19,7 +21,7 @@ pub struct UpvoteProofParams<'a> {
 }
 
 /// Generate an upvote verification MainPod
-/// 
+///
 /// This creates a MainPod that cryptographically proves:
 /// - Identity pod was signed by a registered identity server
 /// - Upvote pod was signed by the user from the identity pod
@@ -39,67 +41,108 @@ pub fn prove_upvote_verification(params: UpvoteProofParams) -> MainPodResult<Mai
     let batch = parse(&predicate_input, &pod_params, &[])
         .map_err(|e| MainPodError::ProofGeneration(format!("Predicate parsing failed: {e}")))?
         .custom_batch;
-    
-    let identity_verified_pred = batch.predicate_ref_by_name("identity_verified")
-        .ok_or_else(|| MainPodError::ProofGeneration("Missing identity_verified predicate".to_string()))?;
-    let upvote_verified_pred = batch.predicate_ref_by_name("upvote_verified")
-        .ok_or_else(|| MainPodError::ProofGeneration("Missing upvote_verified predicate".to_string()))?;
-    let upvote_verification_pred = batch.predicate_ref_by_name("upvote_verification")
-        .ok_or_else(|| MainPodError::ProofGeneration("Missing upvote_verification predicate".to_string()))?;
+
+    let identity_verified_pred = batch
+        .predicate_ref_by_name("identity_verified")
+        .ok_or_else(|| {
+            MainPodError::ProofGeneration("Missing identity_verified predicate".to_string())
+        })?;
+    let upvote_verified_pred = batch
+        .predicate_ref_by_name("upvote_verified")
+        .ok_or_else(|| {
+            MainPodError::ProofGeneration("Missing upvote_verified predicate".to_string())
+        })?;
+    let upvote_verification_pred = batch
+        .predicate_ref_by_name("upvote_verification")
+        .ok_or_else(|| {
+            MainPodError::ProofGeneration("Missing upvote_verification predicate".to_string())
+        })?;
 
     // Step 1: Build identity verification main pod
     let mut identity_builder = MainPodBuilder::new(&pod_params, vd_set);
     identity_builder.add_signed_pod(params.identity_pod);
 
-    let identity_type_check = identity_builder.priv_op(op!(eq, (params.identity_pod, KEY_TYPE), PodType::Signed))
+    let identity_type_check = identity_builder
+        .priv_op(op!(eq, (params.identity_pod, KEY_TYPE), PodType::Signed))
         .map_err(|e| MainPodError::ProofGeneration(format!("Identity type check failed: {e}")))?;
-    let _identity_signer_check = identity_builder.priv_op(op!(
-        eq,
-        (params.identity_pod, KEY_SIGNER),
-        params.identity_server_public_key.clone()
-    )).map_err(|e| MainPodError::ProofGeneration(format!("Identity signer check failed: {e}")))?;
-    let identity_username_check = identity_builder.priv_op(op!(eq, (params.identity_pod, "username"), username))
-        .map_err(|e| MainPodError::ProofGeneration(format!("Identity username check failed: {e}")))?;
+    let _identity_signer_check = identity_builder
+        .priv_op(op!(
+            eq,
+            (params.identity_pod, KEY_SIGNER),
+            params.identity_server_public_key.clone()
+        ))
+        .map_err(|e| MainPodError::ProofGeneration(format!("Identity signer check failed: {e}")))?;
+    let identity_username_check = identity_builder
+        .priv_op(op!(eq, (params.identity_pod, "username"), username))
+        .map_err(|e| {
+            MainPodError::ProofGeneration(format!("Identity username check failed: {e}"))
+        })?;
 
-    let identity_verification = identity_builder.pub_op(op!(
-        custom,
-        identity_verified_pred,
-        identity_type_check,
-        identity_username_check
-    )).map_err(|e| MainPodError::ProofGeneration(format!("Identity verification statement failed: {e}")))?;
+    let identity_verification = identity_builder
+        .pub_op(op!(
+            custom,
+            identity_verified_pred,
+            identity_type_check,
+            identity_username_check
+        ))
+        .map_err(|e| {
+            MainPodError::ProofGeneration(format!("Identity verification statement failed: {e}"))
+        })?;
 
-    let identity_main_pod = identity_builder.prove(prover.as_ref(), &pod_params)
-        .map_err(|e| MainPodError::ProofGeneration(format!("Identity proof generation failed: {e}")))?;
-    
-    identity_main_pod.pod.verify()
-        .map_err(|e| MainPodError::ProofGeneration(format!("Identity proof verification failed: {e}")))?;
+    let identity_main_pod = identity_builder
+        .prove(prover.as_ref(), &pod_params)
+        .map_err(|e| {
+            MainPodError::ProofGeneration(format!("Identity proof generation failed: {e}"))
+        })?;
+
+    identity_main_pod.pod.verify().map_err(|e| {
+        MainPodError::ProofGeneration(format!("Identity proof verification failed: {e}"))
+    })?;
 
     // Step 2: Build upvote verification main pod
     let mut upvote_builder = MainPodBuilder::new(&pod_params, vd_set);
     upvote_builder.add_signed_pod(params.upvote_pod);
 
-    let upvote_type_check = upvote_builder.priv_op(op!(eq, (params.upvote_pod, KEY_TYPE), PodType::Signed))
+    let upvote_type_check = upvote_builder
+        .priv_op(op!(eq, (params.upvote_pod, KEY_TYPE), PodType::Signed))
         .map_err(|e| MainPodError::ProofGeneration(format!("Upvote type check failed: {e}")))?;
-    let _upvote_signer_check = upvote_builder.priv_op(op!(eq, (params.upvote_pod, KEY_SIGNER), user_public_key))
+    let _upvote_signer_check = upvote_builder
+        .priv_op(op!(eq, (params.upvote_pod, KEY_SIGNER), user_public_key))
         .map_err(|e| MainPodError::ProofGeneration(format!("Upvote signer check failed: {e}")))?;
-    let upvote_content_check = upvote_builder.priv_op(op!(eq, (params.upvote_pod, "content_hash"), *params.content_hash))
+    let upvote_content_check = upvote_builder
+        .priv_op(op!(
+            eq,
+            (params.upvote_pod, "content_hash"),
+            *params.content_hash
+        ))
         .map_err(|e| MainPodError::ProofGeneration(format!("Upvote content check failed: {e}")))?;
-    let upvote_request_type_check = upvote_builder.priv_op(op!(eq, (params.upvote_pod, "request_type"), "upvote"))
-        .map_err(|e| MainPodError::ProofGeneration(format!("Upvote request type check failed: {e}")))?;
+    let upvote_request_type_check = upvote_builder
+        .priv_op(op!(eq, (params.upvote_pod, "request_type"), "upvote"))
+        .map_err(|e| {
+            MainPodError::ProofGeneration(format!("Upvote request type check failed: {e}"))
+        })?;
 
-    let upvote_verification = upvote_builder.pub_op(op!(
-        custom,
-        upvote_verified_pred,
-        upvote_type_check,
-        upvote_content_check,
-        upvote_request_type_check
-    )).map_err(|e| MainPodError::ProofGeneration(format!("Upvote verification statement failed: {e}")))?;
+    let upvote_verification = upvote_builder
+        .pub_op(op!(
+            custom,
+            upvote_verified_pred,
+            upvote_type_check,
+            upvote_content_check,
+            upvote_request_type_check
+        ))
+        .map_err(|e| {
+            MainPodError::ProofGeneration(format!("Upvote verification statement failed: {e}"))
+        })?;
 
-    let upvote_main_pod = upvote_builder.prove(prover.as_ref(), &pod_params)
-        .map_err(|e| MainPodError::ProofGeneration(format!("Upvote proof generation failed: {e}")))?;
-    
-    upvote_main_pod.pod.verify()
-        .map_err(|e| MainPodError::ProofGeneration(format!("Upvote proof verification failed: {e}")))?;
+    let upvote_main_pod = upvote_builder
+        .prove(prover.as_ref(), &pod_params)
+        .map_err(|e| {
+            MainPodError::ProofGeneration(format!("Upvote proof generation failed: {e}"))
+        })?;
+
+    upvote_main_pod.pod.verify().map_err(|e| {
+        MainPodError::ProofGeneration(format!("Upvote proof verification failed: {e}"))
+    })?;
 
     // Step 3: Build final upvote verification main pod
     let mut final_builder = MainPodBuilder::new(&pod_params, vd_set);
@@ -108,38 +151,54 @@ pub fn prove_upvote_verification(params: UpvoteProofParams) -> MainPodResult<Mai
     final_builder.add_signed_pod(params.identity_pod);
     final_builder.add_signed_pod(params.upvote_pod);
 
-    let identity_server_pk_check = final_builder.priv_op(op!(
-        eq,
-        (params.identity_pod, KEY_SIGNER),
-        params.identity_server_public_key.clone()
-    )).map_err(|e| MainPodError::ProofGeneration(format!("Final identity server check failed: {e}")))?;
-    
-    let user_pk_check = final_builder.priv_op(op!(
-        eq,
-        (params.identity_pod, "user_public_key"),
-        (params.upvote_pod, KEY_SIGNER)
-    )).map_err(|e| MainPodError::ProofGeneration(format!("Final user key check failed: {e}")))?;
+    let identity_server_pk_check = final_builder
+        .priv_op(op!(
+            eq,
+            (params.identity_pod, KEY_SIGNER),
+            params.identity_server_public_key.clone()
+        ))
+        .map_err(|e| {
+            MainPodError::ProofGeneration(format!("Final identity server check failed: {e}"))
+        })?;
 
-    let _upvote_verification_final = final_builder.pub_op(op!(
-        custom,
-        upvote_verification_pred,
-        identity_verification,
-        upvote_verification,
-        identity_server_pk_check,
-        user_pk_check
-    )).map_err(|e| MainPodError::ProofGeneration(format!("Final upvote verification statement failed: {e}")))?;
+    let user_pk_check = final_builder
+        .priv_op(op!(
+            eq,
+            (params.identity_pod, "user_public_key"),
+            (params.upvote_pod, KEY_SIGNER)
+        ))
+        .map_err(|e| MainPodError::ProofGeneration(format!("Final user key check failed: {e}")))?;
 
-    let main_pod = final_builder.prove(prover.as_ref(), &pod_params)
-        .map_err(|e| MainPodError::ProofGeneration(format!("Final proof generation failed: {e}")))?;
+    let _upvote_verification_final = final_builder
+        .pub_op(op!(
+            custom,
+            upvote_verification_pred,
+            identity_verification,
+            upvote_verification,
+            identity_server_pk_check,
+            user_pk_check
+        ))
+        .map_err(|e| {
+            MainPodError::ProofGeneration(format!(
+                "Final upvote verification statement failed: {e}"
+            ))
+        })?;
 
-    main_pod.pod.verify()
-        .map_err(|e| MainPodError::ProofGeneration(format!("Final proof verification failed: {e}")))?;
+    let main_pod = final_builder
+        .prove(prover.as_ref(), &pod_params)
+        .map_err(|e| {
+            MainPodError::ProofGeneration(format!("Final proof generation failed: {e}"))
+        })?;
+
+    main_pod.pod.verify().map_err(|e| {
+        MainPodError::ProofGeneration(format!("Final proof verification failed: {e}"))
+    })?;
 
     Ok(main_pod)
 }
 
 /// Verify an upvote verification MainPod
-/// 
+///
 /// This verifies that the MainPod contains the expected public statements
 /// and that the content hash and username match the expected values.
 pub fn verify_upvote_verification(
@@ -180,7 +239,6 @@ pub fn verify_upvote_verification(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    
+
     // Add unit tests for upvote verification functions
 }

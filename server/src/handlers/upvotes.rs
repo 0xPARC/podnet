@@ -20,12 +20,9 @@ pub async fn upvote_document(
     State(state): State<Arc<crate::AppState>>,
     Json(payload): Json<UpvoteRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    use pod2::lang::parse;
-    use pod2::middleware::Statement;
 
     log::info!("Processing upvote for document {document_id} with main pod verification");
 
-    let params = state.pod_config.get_params();
     let (_vd_set, _prover) = state.pod_config.get_prover_setup()?;
 
     // Verify main pod proof
@@ -36,51 +33,20 @@ pub async fn upvote_document(
     })?;
     log::info!("✓ Upvote main pod proof verified");
 
-    // Verify the main pod contains the expected public statements
-    log::info!("Verifying upvote main pod public statements");
-
-    // Get predicate definition from shared models
-    let predicate_input = get_upvote_verification_predicate();
-    log::info!("Upvote predicate text is: {predicate_input}");
-
-    log::info!("Parsing custom predicates");
-    let batch = parse(&predicate_input, &params, &[])
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .custom_batch;
-    let upvote_verification_pred = batch.predicate_ref_by_name("upvote_verification").unwrap();
-
-    let upvote_verification_args = payload
-        .upvote_main_pod
-        .public_statements
-        .iter()
-        .find_map(|v| match v {
-            Statement::Custom(pred, args) if *pred == upvote_verification_pred => Some(args),
-            _ => None,
-        })
-        .ok_or_else(|| {
-            log::error!("Upvote main pod public statements missing upvote_verification predicate");
-            StatusCode::BAD_REQUEST
-        })?;
-
-    log::info!("✓ Upvote main pod public statements present");
-
-    // Extract public data directly from main pod
+    // Extract public data using the macro
     log::info!("Extracting public data from upvote main pod");
-    let uploader_username = upvote_verification_args[0]
-        .as_str()
-        .ok_or_else(|| {
-            log::error!("upvote_verification predicate missing username argument");
-            StatusCode::BAD_REQUEST
-        })?
-        .to_string();
-    let content_hash = upvote_verification_args[1].as_hash().ok_or_else(|| {
-        log::error!("upvote_verification predicate missing content_hash argument");
+    let (uploader_username, content_hash, identity_server_pk) = podnet_models::extract_mainpod_args!(
+        &payload.upvote_main_pod,
+        get_upvote_verification_predicate(),
+        "upvote_verification",
+        username: as_str,
+        content_hash: as_hash,
+        identity_server_pk: as_public_key
+    ).map_err(|e| {
+        log::error!("Failed to extract upvote verification arguments: {e}");
         StatusCode::BAD_REQUEST
     })?;
-    let identity_server_pk = upvote_verification_args[2].as_public_key().ok_or_else(|| {
-        log::error!("upvote_verification predicate missing identity_server_pk argument");
-        StatusCode::BAD_REQUEST
-    })?;
+    let uploader_username = uploader_username.to_string();
 
     log::info!(
         "✓ Extracted public data: uploader_username={uploader_username}, content_hash={content_hash}",

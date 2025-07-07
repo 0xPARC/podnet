@@ -131,14 +131,9 @@ pub fn prove_upvote_count_inductive(params: UpvoteCountInductiveParams) -> MainP
         .upvote_verification_main_pod
         .public_statements
         .iter()
-        .find(|stmt| {
-            if let Statement::Custom(pred, args) = stmt {
-                if *pred == upvote_verification_pred {
-                    return true;
-                }
-            }
-            false
-        })
+        .find(
+            |stmt| matches!(stmt, Statement::Custom(pred, _) if *pred == upvote_verification_pred),
+        )
         .ok_or_else(|| {
             MainPodError::Verification("Missing upvote verification statement".to_string())
         })?;
@@ -148,8 +143,8 @@ pub fn prove_upvote_count_inductive(params: UpvoteCountInductiveParams) -> MainP
         .priv_op(op!(sum_of, params.expected_count, intermediate_count, 1))
         .map_err(|e| MainPodError::ProofGeneration(format!("Count sum check failed: {e}")))?;
 
-    let _upvote_count_inductive = builder
-        .pub_op(op!(
+    let upvote_count_inductive = builder
+        .priv_op(op!(
             custom,
             upvote_count_ind_pred,
             upvote_stmt,
@@ -158,6 +153,17 @@ pub fn prove_upvote_count_inductive(params: UpvoteCountInductiveParams) -> MainP
         ))
         .map_err(|e| {
             MainPodError::ProofGeneration(format!("Inductive case statement failed: {e}"))
+        })?;
+
+    let _upvote_count = builder
+        .pub_op(op!(
+            custom,
+            upvote_count_pred,
+            Statement::None,
+            upvote_count_inductive
+        ))
+        .map_err(|e| {
+            MainPodError::ProofGeneration(format!("Predicate OR statement failed: {e}"))
         })?;
 
     let main_pod = builder.prove(prover.as_ref(), &pod_params).map_err(|e| {
@@ -228,10 +234,7 @@ fn extract_upvote_pred_from_mainpod(main_pod: &MainPod) -> MainPodResult<Stateme
     let pred = main_pod
         .public_statements
         .iter()
-        .find_map(|stmt| match stmt {
-            Statement::Custom(pred, args) if *pred == upvote_count_pred => Some(stmt),
-            _ => None,
-        })
+        .find(|stmt| matches!(stmt, Statement::Custom(pred, _) if *pred == upvote_count_pred))
         .ok_or_else(|| {
             MainPodError::Verification("MainPod missing upvote_count statement".to_string())
         })?;
@@ -262,8 +265,6 @@ fn extract_upvote_args_from_statement(statement: &Statement) -> MainPodResult<Ve
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     // Add unit tests for upvote count functions
 }
-
