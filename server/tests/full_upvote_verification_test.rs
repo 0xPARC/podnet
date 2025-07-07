@@ -44,6 +44,7 @@ fn run_full_test() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n--- Step 1: Generating Keypairs ---");
     let (identity_server_sk, identity_server_pk) = generate_keypair("identity_server")?;
     let (client_sk, client_pk) = generate_keypair("client")?;
+    let (server_sk, server_pk) = generate_keypair("server")?;
 
     // Step 2: Create identity pod
     println!("\n--- Step 2: Creating Identity Pod ---");
@@ -89,8 +90,13 @@ fn run_full_test() -> Result<(), Box<dyn std::error::Error>> {
 
     // Step 6: Create base case proof
     println!("\n--- Step 6: Creating Base Case Upvote Count Proof ---");
-    let base_case_main_pod =
-        build_base_case_proof(username, &content_hash, &identity_server_pk, post_id)?;
+    let base_case_main_pod = build_base_case_proof(
+        username,
+        &content_hash,
+        &identity_server_pk,
+        post_id,
+        &server_sk,
+    )?;
     println!("✓ Base case upvote count proof created and verified");
 
     // Step 7: Create inductive proof (this is where we expect it to fail)
@@ -202,8 +208,12 @@ fn get_full_upvote_verification_predicate() -> String {
             Equal(?identity_pod["user_public_key"], ?upvote_pod["{key_signer}"])
         )
 
-        upvote_count_base(count, username, content_hash, identity_server_pk, post_id) = AND(
+        upvote_count_base(count, username, content_hash, identity_server_pk, post_id, private: data_pod) = AND(
             Equal(?count, 0)
+            Equal(?data_pod["username"], ?username)
+            Equal(?data_pod["content_hash"], ?content_hash)
+            Equal(?data_pod["identity_server_pk"], ?identity_server_pk)
+            Equal(?data_pod["post_id"], ?post_id)
         )
 
         upvote_count_ind(count, username, content_hash, identity_server_pk, post_id, private: intermed) = AND(
@@ -398,6 +408,7 @@ fn build_base_case_proof(
     content_hash: &Hash,
     identity_server_pk: &Point,
     post_id: i64,
+    server_sk: &SecretKey,
 ) -> Result<MainPod, Box<dyn std::error::Error>> {
     let mut params = Params::default();
     params.max_custom_batch_size = 10;
@@ -416,13 +427,41 @@ fn build_base_case_proof(
         .predicate_ref_by_name("upvote_count")
         .ok_or("upvote_count predicate not found")?;
 
+    // Build a signed pod containing the user data
+    let mut base_case_data = SignedPodBuilder::new(&params);
+    base_case_data.insert("username", username);
+    base_case_data.insert("content_hash", *content_hash);
+    base_case_data.insert("identity_server_pk", *identity_server_pk);
+    base_case_data.insert("post_id", post_id);
+
+    // Sign with server's private key
+    let signer_key = server_sk.0.clone();
+    let base_case_data = base_case_data.sign(&mut Signer(SecretKey(signer_key)))?;
+
     // Build the main pod
     let mut builder = MainPodBuilder::new(&params, &vd_set);
+    builder.add_signed_pod(&base_case_data);
 
     // Base case: count = 0
     let zero_check = builder.priv_op(op!(eq, 0, 0))?;
-    let base_case_stmt =
-        builder.priv_op(op!(custom, upvote_count_base_pred.clone(), zero_check))?;
+    let username_stmt = builder.pub_op(op!(eq, (&base_case_data, "username"), username))?;
+    let content_hash_stmt =
+        builder.pub_op(op!(eq, (&base_case_data, "content_hash"), *content_hash))?;
+    let identity_server_pk_stmt = builder.pub_op(op!(
+        eq,
+        (&base_case_data, "identity_server_pk"),
+        *identity_server_pk
+    ))?;
+    let post_id_stmt = builder.pub_op(op!(eq, (&base_case_data, "post_id"), post_id))?;
+    let base_case_stmt = builder.priv_op(op!(
+        custom,
+        upvote_count_base_pred.clone(),
+        zero_check,
+        username_stmt,
+        content_hash_stmt,
+        identity_server_pk_stmt,
+        post_id_stmt
+    ))?;
 
     // Public upvote_count statement
     let public_stmt = builder.pub_op(op!(
@@ -435,6 +474,7 @@ fn build_base_case_proof(
     // Prove
     let main_pod = builder.prove(&mock_prover, &params)?;
     main_pod.pod.verify()?;
+    println!("MAIN POD: {}", main_pod);
 
     Ok(main_pod)
 }

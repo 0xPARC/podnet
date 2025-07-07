@@ -93,7 +93,6 @@ pub async fn upvote_document(
 
     upvote_builder.insert("request_type", "upvote");
     upvote_builder.insert("content_hash", content_hash);
-    upvote_builder.insert("post_id", post_id);
     upvote_builder.insert("timestamp", Utc::now().timestamp());
 
     let upvote_pod = upvote_builder.sign(&mut Signer(secret_key))?;
@@ -125,7 +124,6 @@ pub async fn upvote_document(
         &upvote_pod,
         identity_server_pk,
         &content_hash,
-        post_id,
         use_mock,
     )?;
 
@@ -175,7 +173,6 @@ fn create_upvote_verification_main_pod(
     upvote_pod: &pod2::frontend::SignedPod,
     identity_server_public_key: pod2::middleware::Value,
     content_hash: &Hash,
-    post_id: i64,
     use_mock: bool,
 ) -> Result<MainPod, Box<dyn std::error::Error>> {
     let mut params = Params::default();
@@ -253,7 +250,6 @@ fn create_upvote_verification_main_pod(
         upvote_builder.priv_op(op!(eq, (upvote_pod, KEY_SIGNER), user_public_key))?;
     let upvote_content_check =
         upvote_builder.priv_op(op!(eq, (upvote_pod, "content_hash"), *content_hash))?;
-    let upvote_post_id_check = upvote_builder.priv_op(op!(eq, (upvote_pod, "post_id"), post_id))?;
     let upvote_request_type_check =
         upvote_builder.priv_op(op!(eq, (upvote_pod, "request_type"), "upvote"))?;
 
@@ -263,7 +259,6 @@ fn create_upvote_verification_main_pod(
         upvote_verified_pred,
         upvote_type_check,
         upvote_content_check,
-        upvote_post_id_check,
         upvote_request_type_check
     ))?;
 

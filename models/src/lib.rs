@@ -127,9 +127,9 @@ pub struct User {
 pub struct IdentityServer {
     pub id: Option<i64>,
     pub server_id: String,
-    pub public_key: String,       // Stored as string in DB
-    pub challenge_pod: String,    // Server's challenge pod as JSON string
-    pub identity_pod: String,     // Identity server's response pod as JSON string
+    pub public_key: String,    // Stored as string in DB
+    pub challenge_pod: String, // Server's challenge pod as JSON string
+    pub identity_pod: String,  // Identity server's response pod as JSON string
     pub created_at: Option<String>,
 }
 
@@ -154,7 +154,7 @@ pub struct IdentityServerChallengeResponse {
 #[derive(Debug, Deserialize)]
 pub struct IdentityServerRegistration {
     /// Registration request containing both server's challenge and identity server's response
-    /// 
+    ///
     /// server_challenge_pod contains:
     /// - challenge: String (original challenge from server)
     /// - expires_at: String (expiration timestamp)
@@ -285,32 +285,33 @@ pub fn get_upvote_verification_predicate() -> String {
             Equal(?identity_pod["username"], ?username)
         )
 
-        upvote_verified(content_hash, post_id, private: upvote_pod) = AND(
+        upvote_verified(content_hash, private: upvote_pod) = AND(
             Equal(?upvote_pod["{key_type}"], {signed_pod_type})
             Equal(?upvote_pod["content_hash"], ?content_hash)
-            Equal(?upvote_pod["post_id"], ?post_id)
             Equal(?upvote_pod["request_type"], "upvote")
         )
 
-        upvote_verification(username, content_hash, identity_server_pk, post_id, private: identity_pod, upvote_pod) = AND(
+        upvote_verification(username, content_hash, identity_server_pk, private: identity_pod, upvote_pod) = AND(
             identity_verified(?username)
-            upvote_verified(?content_hash, ?post_id)
+            upvote_verified(?content_hash)
             Equal(?identity_pod["{key_signer}"], ?identity_server_pk)
             Equal(?identity_pod["user_public_key"], ?upvote_pod["{key_signer}"])
         )
 
-        upvote_count_base(count, username, content_hash, identity_server_pk, post_id) = AND(
+        upvote_count_base(count, content_hash, private: data_pod) = AND(
             Equal(?count, 0)
+            Equal(?data_pod["content_hash"], ?content_hash)
         )
 
-        upvote_count_ind(count, username, content_hash, identity_server_pk, post_id, private: intermed) = AND(
-            upvote_count(?intermed, ?username, ?content_hash, ?identity_server_pk, ?post_id)
+        upvote_count_ind(count, content_hash, private: intermed, username, identity_server_pk) = AND(
+            upvote_count(?intermed, ?content_hash)
             SumOf(?count, ?intermed, 1)
+            upvote_verification(?username, ?content_hash, ?identity_server_pk)
         )
 
-        upvote_count(count, username, content_hash, identity_server_pk, post_id) = OR(
-            upvote_count_base(?count, ?username, ?content_hash, ?identity_server_pk, ?post_id)
-            upvote_count_ind(?count, ?username, ?content_hash, ?identity_server_pk, ?post_id)
+        upvote_count(count, content_hash) = OR(
+            upvote_count_base(?count, ?content_hash)
+            upvote_count_ind(?count, ?content_hash)
         )
         "#,
         key_type = KEY_TYPE,
@@ -341,7 +342,8 @@ pub mod mainpod {
         main_pod.pod.verify()?;
 
         // Verify the main pod contains the expected public statements
-        let params = Params::default();
+        let mut params = Params::default();
+        params.max_custom_batch_size = 6;
 
         // Choose prover based on mock flag (use same as server)
         let mock_prover = MockProver {};
@@ -361,12 +363,21 @@ pub mod mainpod {
             .predicate_ref_by_name("publish_verification")
             .ok_or("Failed to find publish_verification predicate")?;
 
+        println!("GOT MAIN POD OF: {:?}", main_pod.public_statements);
         let publish_verification_args = main_pod
             .public_statements
             .iter()
-            .find_map(|v| match v {
-                Statement::Custom(pred, args) if *pred == publish_verification_pred => Some(args),
-                _ => None,
+            .find_map(|v| {
+                println!(
+                    "GOT V: {:?}\n\n want {:?}\n\n\n",
+                    v, publish_verification_pred
+                );
+                match v {
+                    Statement::Custom(pred, args) if *pred == publish_verification_pred => {
+                        Some(args)
+                    }
+                    _ => None,
+                }
             })
             .ok_or("Main pod public statements missing publish_verification predicate")?;
 

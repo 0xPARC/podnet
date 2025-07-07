@@ -280,7 +280,6 @@ pub async fn publish_document(
                 state_clone,
                 document_id,
                 &content_hash,
-                post_id,
             )
             .await
             {
@@ -296,4 +295,3 @@ pub async fn publish_document(
     log::info!("Document publish completed successfully using main pod verification");
     Ok(Json(document))
 }
-

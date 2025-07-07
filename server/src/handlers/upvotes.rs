@@ -4,9 +4,16 @@ use axum::{
     response::Json,
 };
 use pod_utils::ValueExt;
+use pod2::backends::plonky2::{
+    primitives::ec::{curve::Point, schnorr::SecretKey},
+    signedpod::Signer,
+};
+use pod2::frontend::{MainPod, SignedPod, SignedPodBuilder};
 use pod2::middleware::Hash;
 use podnet_models::{UpvoteRequest, get_upvote_verification_predicate};
 use std::sync::Arc;
+
+use crate::pod::get_server_secret_key;
 
 pub async fn upvote_document(
     Path(document_id): Path<i64>,
@@ -74,16 +81,11 @@ pub async fn upvote_document(
         log::error!("upvote_verification predicate missing identity_server_pk argument");
         StatusCode::BAD_REQUEST
     })?;
-    let post_id = upvote_verification_args[3].as_i64().ok_or_else(|| {
-        log::error!("upvote_verification predicate missing post_id argument");
-        StatusCode::BAD_REQUEST
-    })?;
 
     log::info!(
-        "✓ Extracted public data: username={}, content_hash={}, post_id={}",
+        "✓ Extracted public data: username={}, content_hash={}",
         username,
         content_hash,
-        post_id
     );
 
     // Verify the identity server public key is registered in our database
@@ -137,17 +139,6 @@ pub async fn upvote_document(
     }
     log::info!("✓ Content hash verified");
 
-    // Verify post ID matches
-    if document.post_id != post_id {
-        log::error!(
-            "Post ID mismatch: document={} vs upvote={}",
-            document.post_id,
-            post_id
-        );
-        return Err(StatusCode::BAD_REQUEST);
-    }
-    log::info!("✓ Post ID verified");
-
     // Check if user has already upvoted this document (by username)
     let already_upvoted = state
         .db
@@ -193,12 +184,17 @@ pub async fn upvote_document(
     let state_clone = state.clone();
     let doc_id = document_id;
     let hash = content_hash;
-    let p_id = post_id;
     let current_count = upvote_count;
 
     tokio::spawn(async move {
-        if let Err(e) =
-            generate_inductive_upvote_pod(state_clone, doc_id, &hash, p_id, current_count).await
+        if let Err(e) = generate_inductive_upvote_pod(
+            state_clone,
+            doc_id,
+            &hash,
+            current_count,
+            &payload.upvote_main_pod,
+        )
+        .await
         {
             log::error!(
                 "Failed to generate inductive upvote count pod for document {}: {}",
@@ -219,8 +215,7 @@ pub async fn upvote_document(
 pub async fn generate_base_case_upvote_pod(
     state: Arc<crate::AppState>,
     document_id: i64,
-    _content_hash: &Hash,
-    _post_id: i64,
+    content_hash: &Hash,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use pod2::frontend::MainPodBuilder;
     use pod2::op;
@@ -229,6 +224,8 @@ pub async fn generate_base_case_upvote_pod(
         "Generating base case upvote count pod for document {}",
         document_id
     );
+
+    let server_sk = get_server_secret_key();
 
     // Get predicate batch and parameters (similar to existing code)
     let predicate_str = podnet_models::get_upvote_verification_predicate();
@@ -240,6 +237,12 @@ pub async fn generate_base_case_upvote_pod(
         .pod_config
         .get_prover_setup()
         .map_err(|e| format!("Failed to get prover setup: {:?}", e))?;
+
+    // create signed pod with public data
+    let mut data_builder = SignedPodBuilder::new(&params);
+    data_builder.insert("content_hash", *content_hash);
+    let mut server_signer = Signer(SecretKey(server_sk.0.clone()));
+    let data_pod = data_builder.sign(&mut server_signer)?;
 
     let upvote_count_base = batch
         .custom_batch
@@ -253,11 +256,18 @@ pub async fn generate_base_case_upvote_pod(
     // Build base case main pod (count = 0)
     log::info!("Building base case upvote count pod (count=0)...");
     let mut base_builder = MainPodBuilder::new(&params, vd_set);
+    base_builder.add_signed_pod(&data_pod);
 
     // Create the base case: Equal(count, 0)
     let equals_zero_stmt = base_builder.priv_op(op!(eq, 0, 0))?;
-    let upvote_count_base_stmt =
-        base_builder.priv_op(op!(custom, upvote_count_base.clone(), equals_zero_stmt))?;
+    let content_hash_stmt =
+        base_builder.priv_op(op!(eq, (&data_pod, "content_hash"), *content_hash))?;
+    let upvote_count_base_stmt = base_builder.priv_op(op!(
+        custom,
+        upvote_count_base.clone(),
+        equals_zero_stmt,
+        content_hash_stmt
+    ))?;
     let _count_stmt = base_builder.pub_op(op!(
         custom,
         upvote_count.clone(),
@@ -294,8 +304,8 @@ async fn generate_inductive_upvote_pod(
     state: Arc<crate::AppState>,
     document_id: i64,
     content_hash: &Hash,
-    post_id: i64,
     current_count: i64,
+    upvote_verification_pod: &MainPod,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use pod2::frontend::MainPodBuilder;
     use pod2::op;
@@ -321,8 +331,7 @@ async fn generate_inductive_upvote_pod(
                 document_id
             );
             // If no previous pod exists, generate base case first
-            generate_base_case_upvote_pod(state.clone(), document_id, content_hash, post_id)
-                .await?;
+            generate_base_case_upvote_pod(state.clone(), document_id, content_hash).await?;
 
             // Then get the newly created base case pod
             let base_pod_json = state
@@ -365,6 +374,7 @@ async fn generate_inductive_upvote_pod(
 
     // Add the previous pod as a recursive dependency
     ind_builder.add_recursive_pod(previous_pod.clone());
+    ind_builder.add_recursive_pod(upvote_verification_pod.clone());
 
     // Create SumOf operation: current_count = previous_count + 1
     let previous_count = current_count - 1;
@@ -372,9 +382,16 @@ async fn generate_inductive_upvote_pod(
 
     // Get the recursive statement from the previous pod (should be the public upvote_count statement)
     let recursive_statement = if !previous_pod.public_statements.is_empty() {
-        previous_pod.public_statements[previous_pod.public_statements.len() - 1].clone()
+        previous_pod.public_statements.last().unwrap()
     } else {
         return Err("Previous pod has no public statements".into());
+    };
+
+    // Get the upvote verification predicate from the previous pod
+    let upvote_verification_stmt = if !upvote_verification_pod.public_statements.is_empty() {
+        upvote_verification_pod.public_statements.last().unwrap()
+    } else {
+        return Err("Upvote verification pod has no public statements".into());
     };
 
     // Create the inductive case statement
@@ -382,7 +399,8 @@ async fn generate_inductive_upvote_pod(
         custom,
         upvote_count_ind.clone(),
         recursive_statement,
-        sum_of_stmt
+        sum_of_stmt,
+        upvote_verification_stmt
     ))?;
 
     // Create the public upvote_count statement
@@ -419,4 +437,3 @@ async fn generate_inductive_upvote_pod(
 
     Ok(())
 }
-
