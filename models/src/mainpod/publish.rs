@@ -1,7 +1,7 @@
 //! Publish verification MainPod operations
 
 use super::{
-    MainPodError, MainPodResult, extract_authors, extract_post_id, extract_tags,
+    MainPodError, MainPodResult, extract_authors, extract_post_id, extract_reply_to, extract_tags,
     extract_user_public_key, extract_username, verify_mainpod_basics,
 };
 use crate::get_publish_verification_predicate;
@@ -35,12 +35,14 @@ pub fn prove_publish_verification(params: PublishProofParams) -> MainPodResult<M
     let (vd_set, prover) = PodNetProverSetup::create_prover_setup(params.use_mock_proofs)
         .map_err(MainPodError::ProofGeneration)?;
 
+    // TODO: this needs to be refactored...
     // Extract required values from pods
     let username = extract_username(params.identity_pod)?;
     let user_public_key = extract_user_public_key(params.identity_pod)?;
     let post_id = extract_post_id(params.document_pod, "Document")?;
     let tags = extract_tags(params.document_pod, "Document")?;
     let authors = extract_authors(params.document_pod, "Authors")?;
+    let reply_to = extract_reply_to(params.document_pod, "Reply to").unwrap_or(Value::from(-1));
 
     // Parse predicates
     let predicate_input = get_publish_verification_predicate();
@@ -137,6 +139,11 @@ pub fn prove_publish_verification(params: PublishProofParams) -> MainPodResult<M
         .map_err(|e| {
             MainPodError::ProofGeneration(format!("Document post ID check failed: {e}"))
         })?;
+    let document_reply_to_check = document_builder
+        .priv_op(op!(eq, (params.document_pod, "reply_to"), reply_to))
+        .map_err(|e| {
+            MainPodError::ProofGeneration(format!("Document reply_to check failed: {e}"))
+        })?;
 
     let document_verification = document_builder
         .pub_op(op!(
@@ -146,7 +153,8 @@ pub fn prove_publish_verification(params: PublishProofParams) -> MainPodResult<M
             document_content_check,
             document_tags_check,
             document_authors_check,
-            document_post_id_check
+            document_post_id_check,
+            document_reply_to_check
         ))
         .map_err(|e| {
             MainPodError::ProofGeneration(format!("Document verification statement failed: {e}"))
@@ -256,7 +264,8 @@ pub fn verify_publish_verification(
         });
     }
 
-    if post_id != expected_post_id {
+    // Always allow -1, since it signifies that the post should be newly created.
+    if post_id != -1 && post_id != expected_post_id {
         return Err(MainPodError::InvalidValue {
             field: "post_id",
             expected: expected_post_id.to_string(),

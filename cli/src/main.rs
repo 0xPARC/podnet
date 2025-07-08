@@ -297,6 +297,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .short('a')
                         .long("authors")
                         .value_name("AUTHOR1,AUTHOR2,AUTHOR3"),
+                    Arg::new("reply_to")
+                        .help("Optional document ID to reply to")
+                        .short('r')
+                        .long("reply-to")
+                        .value_name("DOCUMENT_ID"),
                 ])
                 .args(content_args()),
         )
@@ -381,7 +386,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let use_mock = sub_matches.get_flag("mock");
             let tags = sub_matches.get_one::<String>("tags");
             let authors = sub_matches.get_one::<String>("authors");
-            publish::publish_content(keypair_file, &content, file_path, format_override, server, post_id, identity_pod_file, use_mock, tags, authors).await?;
+            let reply_to = sub_matches.get_one::<String>("reply_to");
+            publish::publish_content(keypair_file, &content, file_path, format_override, server, post_id, identity_pod_file, use_mock, tags, authors, reply_to).await?;
         }
         Some(("get-post", sub_matches)) => {
             let post_id = sub_matches.get_one::<String>("post_id").unwrap();
@@ -541,13 +547,68 @@ async fn view_post_in_browser(
             println!("⚠️  Warning: Document claims {upvote_count} upvotes but no upvote count proof provided");
         }
 
+        // Fetch replies for this document
+        println!("Fetching replies for document {doc_id}...");
+        let replies_response = client
+            .get(format!("{server_url}/documents/{doc_id}/replies"))
+            .send()
+            .await?;
+
+        let mut replies_html = String::new();
+        if replies_response.status().is_success() {
+            let replies: serde_json::Value = replies_response.json().await?;
+            if let Some(replies_array) = replies.as_array() {
+                if !replies_array.is_empty() {
+                    replies_html.push_str("<div class=\"replies-section\" style=\"margin-top: 30px; border-top: 2px solid #eee; padding-top: 20px;\">");
+                    replies_html.push_str(&format!("<h3>Replies ({} replies)</h3>", replies_array.len()));
+                    
+                    for reply in replies_array {
+                        let reply_id = reply.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
+                        let reply_uploader = reply.get("uploader_id").and_then(|v| v.as_str()).unwrap_or("Unknown");
+                        let reply_created = reply.get("created_at").and_then(|v| v.as_str()).unwrap_or("Unknown");
+                        let reply_upvotes = reply.get("upvote_count").and_then(|v| v.as_i64()).unwrap_or(0);
+                        
+                        // Fetch the reply content
+                        let reply_response = client
+                            .get(format!("{server_url}/documents/{reply_id}/render"))
+                            .send()
+                            .await;
+                        
+                        let reply_content = if let Ok(reply_resp) = reply_response {
+                            if reply_resp.status().is_success() {
+                                if let Ok(reply_doc) = reply_resp.json::<serde_json::Value>().await {
+                                    reply_doc.get("content").and_then(|v| v.as_str()).unwrap_or("Error loading reply content").to_string()
+                                } else {
+                                    "Error parsing reply content".to_string()
+                                }
+                            } else {
+                                "Error fetching reply content".to_string()
+                            }
+                        } else {
+                            "Error fetching reply content".to_string()
+                        };
+                        
+                        replies_html.push_str(&format!(
+                            "<div class=\"reply\" style=\"margin: 15px 0; padding: 15px; background-color: #f8f9fa; border-left: 4px solid #007bff; border-radius: 5px;\">
+                                <div class=\"reply-meta\" style=\"font-size: 0.9em; color: #666; margin-bottom: 10px;\">
+                                    <strong>Reply by {reply_uploader}</strong> • {reply_created} • 👍 {reply_upvotes}
+                                </div>
+                                <div class=\"reply-content\">{reply_content}</div>
+                            </div>"
+                        ));
+                    }
+                    replies_html.push_str("</div>");
+                }
+            }
+        }
+
         document_data.push((
             doc_id,
             revision,
             content_id,
             created_at,
             uploader_username.to_string(),
-            html_content.to_string(),
+            format!("{}{}", html_content, replies_html),
             upvote_count,
             tags,
             authors

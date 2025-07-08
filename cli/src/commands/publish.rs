@@ -23,6 +23,7 @@ pub async fn publish_content(
     use_mock: bool,
     tags: Option<&String>,
     authors: Option<&String>,
+    reply_to: Option<&String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("Publishing content to server using main pod verification...");
 
@@ -147,6 +148,7 @@ pub async fn publish_content(
     );
 
     // Create document pod with content hash, timestamp, tags, and optional post_id
+
     let params = PodNetProverSetup::get_params();
     let mut document_builder = SignedPodBuilder::new(&params);
 
@@ -178,6 +180,14 @@ pub async fn publish_content(
         document_builder.insert("post_id", post_id_num);
     } else {
         document_builder.insert("post_id", -1);
+    }
+
+    // Add reply_to if provided
+    if let Some(id) = reply_to {
+        let reply_to_num = id.parse::<i64>()?;
+        document_builder.insert("reply_to", reply_to_num);
+    } else {
+        document_builder.insert("reply_to", -1);
     }
 
     let document_pod = document_builder.sign(&mut Signer(secret_key))?;
@@ -212,12 +222,28 @@ pub async fn publish_content(
 
     println!("✓ Main pod created and verified");
 
+    // Process reply_to parameter
+    let reply_to_id: Option<i64> = if let Some(reply_to_str) = reply_to {
+        match reply_to_str.parse::<i64>() {
+            Ok(id) => {
+                println!("Replying to document ID: {}", id);
+                Some(id)
+            }
+            Err(_) => {
+                return Err(format!("Invalid reply_to document ID: {}", reply_to_str).into());
+            }
+        }
+    } else {
+        None
+    };
+
     println!("Serializing main pod");
     // Create the publish request with main pod
     let payload = serde_json::json!({
         "content": content,
         "tags": document_tags,
         "authors": document_authors,
+        "reply_to": reply_to_id,
         "main_pod": main_pod
     });
     println!("Main pod is: {}", &main_pod);

@@ -210,6 +210,24 @@ pub async fn publish_document(
         id
     };
 
+    // Validate reply_to if provided
+    if let Some(reply_to_id) = payload.reply_to {
+        log::info!("Validating reply_to document ID: {reply_to_id}");
+        // Verify the document being replied to exists
+        state
+            .db
+            .get_document_metadata(reply_to_id)
+            .map_err(|e| {
+                log::error!("Database error checking reply_to document {reply_to_id}: {e}");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?
+            .ok_or_else(|| {
+                log::error!("Reply_to document {reply_to_id} not found");
+                StatusCode::NOT_FOUND
+            })?;
+        log::info!("Reply_to document {reply_to_id} exists");
+    }
+
     // Create document with timestamp pod in a single transaction
     log::info!("Creating document for post {final_post_id}");
     let document = state
@@ -221,6 +239,7 @@ pub async fn publish_document(
             uploader_username,
             &payload.tags,
             &payload.authors,
+            payload.reply_to,
             &state.storage,
         )
         .map_err(|e| {
@@ -251,4 +270,25 @@ pub async fn publish_document(
 
     log::info!("Document publish completed successfully using main pod verification");
     Ok(Json(document))
+}
+
+pub async fn get_document_replies(
+    Path(id): Path<i64>,
+    State(state): State<Arc<crate::AppState>>,
+) -> Result<Json<Vec<DocumentMetadata>>, StatusCode> {
+    let raw_replies = state
+        .db
+        .get_replies_to_document(id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let mut replies = Vec::new();
+    for raw_reply in raw_replies {
+        let reply_metadata = state
+            .db
+            .raw_document_to_metadata(raw_reply)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        replies.push(reply_metadata);
+    }
+
+    Ok(Json(replies))
 }

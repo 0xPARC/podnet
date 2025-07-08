@@ -126,6 +126,15 @@ pub fn extract_tags(pod: &SignedPod, pod_type: &'static str) -> MainPodResult<Va
     })
 }
 
+pub fn extract_reply_to(pod: &SignedPod, pod_type: &'static str) -> MainPodResult<Value> {
+    pod.get("reply_to")
+        .cloned()
+        .ok_or(MainPodError::MissingField {
+            pod_type,
+            field: "reply_to",
+        })
+}
+
 /// Verify basic MainPod structure and signature
 pub fn verify_mainpod_basics(main_pod: &MainPod) -> MainPodResult<()> {
     main_pod.pod.verify().map_err(|e| {

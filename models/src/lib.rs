@@ -30,6 +30,7 @@ pub struct RawDocument {
     pub upvote_count_pod: Option<String>, // JSON string of the upvote count main pod
     pub tags: HashSet<String>,            // Set of tags for document organization
     pub authors: HashSet<String>,         // Set of authors for document attribution
+    pub reply_to: Option<i64>,            // Document ID this document is replying to
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -76,6 +77,7 @@ pub struct DocumentMetadata {
     pub upvote_count_pod: Option<MainPod>,
     pub tags: HashSet<String>, // Set of tags for document organization and discovery
     pub authors: HashSet<String>, // Set of authors for document attribution
+    pub reply_to: Option<i64>, // Document ID this document is replying to
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -89,6 +91,7 @@ pub struct PublishRequest {
     pub content: String,
     pub tags: HashSet<String>,    // Set of tags for document organization
     pub authors: HashSet<String>, // Set of authors for document attribution
+    pub reply_to: Option<i64>,    // Document ID this document is replying to
     /// MainPod that cryptographically proves the user's identity and document authenticity:
     ///
     /// Contains two inner pods:
@@ -219,6 +222,7 @@ pub struct UpvoteRequest {
 
 /// Shared predicate definitions for publish verification
 pub fn get_publish_verification_predicate() -> String {
+    // TODO: is there a better strategy for many args in the predicates?
     format!(
         r#"
         identity_verified(username, private: identity_pod) = AND(
@@ -226,17 +230,18 @@ pub fn get_publish_verification_predicate() -> String {
             Equal(?identity_pod["username"], ?username)
         )
 
-        document_verified(content_hash, post_id, tags, authors, private: document_pod) = AND(
+        document_verified(content_hash, post_id, tags, authors, reply_to, private: document_pod) = AND(
             Equal(?document_pod["{key_type}"], {signed_pod_type})
             Equal(?document_pod["content_hash"], ?content_hash)
             Equal(?document_pod["tags"], ?tags)
             Equal(?document_pod["authors"], ?authors)
             Equal(?document_pod["post_id"], ?post_id)
+            Equal(?document_pod["reply_to"], ?reply_to)
         )
 
-        publish_verification(username, content_hash, identity_server_pk, post_id, tags, authors, private: identity_pod, document_pod) = AND(
+        publish_verification(username, content_hash, identity_server_pk, post_id, tags, authors, reply_to, private: identity_pod, document_pod) = AND(
             identity_verified(?username)
-            document_verified(?content_hash, ?post_id, ?tags, ?authors)
+            document_verified(?content_hash, ?post_id, ?tags, ?authors, ?reply_to)
             Equal(?identity_pod["{key_signer}"], ?identity_server_pk)
             Equal(?identity_pod["user_public_key"], ?document_pod["{key_signer}"]) 
         )

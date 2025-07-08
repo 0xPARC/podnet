@@ -59,6 +59,7 @@ async fn main() -> anyhow::Result<()> {
             "/documents/:id/render",
             get(handlers::get_rendered_document_by_id),
         )
+        .route("/documents/:id/replies", get(handlers::get_document_replies))
         // Publishing route
         .route("/publish", post(handlers::publish_document))
         // Identity server routes
@@ -85,6 +86,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("  GET  /documents              - List all documents");
     tracing::info!("  GET  /documents/:id          - Get specific document");
     tracing::info!("  GET  /documents/:id/render   - Get rendered document HTML");
+    tracing::info!("  GET  /documents/:id/replies  - Get replies to a document");
     tracing::info!("  POST /publish                - Publish new document");
     tracing::info!("  POST /identity/challenge     - Request challenge for identity server");
     tracing::info!("  POST /identity/register      - Register identity server");
