@@ -29,7 +29,7 @@ Note: The ultimate source of truth on the objects each route requests is in
 ### Documents  
 - **GET** `/documents` - List all document metadata
 - **GET** `/documents/:id` - Get specific document with content
-- **GET** `/documents/:id/render` - Get document rendered as HTML
+- **GET** `/documents/:id/replies` - Get documents that reply to this document
 - **POST** `/publish` - Publish new document
 
 
@@ -57,10 +57,23 @@ Note: The ultimate source of truth on the objects each route requests is in
 **Request Body:**
 ```json
 {
-  "content": "# Document Content\nMarkdown content here...",
+  "content": {
+    "message": "# Document Content\nMarkdown content here...",
+    "file": {
+      "name": "example.png",
+      "content": [/* file bytes */],
+      "mime_type": "image/png"
+    },
+    "url": "https://example.com"
+  },
+  "tags": ["tag1", "tag2"],
+  "authors": ["alice", "bob"],
+  "reply_to": 42,
   "main_pod": { /* MainPod proving identity and document authenticity */ }
 }
 ```
+
+**Note:** The `content` field must contain at least one of `message`, `file`, or `url`. All three can be provided together. The `reply_to` field is optional and references another document's ID.
 
 **MainPod Predicate:** `publish_verification(username, content_hash, identity_server_pk, post_id)`
 
@@ -101,11 +114,22 @@ publish_verification(username, content_hash, identity_server_pk, post_id, privat
     "created_at": "2024-01-01T00:00:00Z",
     "pod": { /* MainPod */ },
     "timestamp_pod": { /* Server timestamp pod */ },
-    "user_id": "alice",
+    "uploader_id": "alice",
     "upvote_count": 0,
-    "upvote_count_pod": null
+    "upvote_count_pod": null,
+    "tags": ["tag1", "tag2"],
+    "authors": ["alice", "bob"],
+    "reply_to": 42
   },
-  "content": "# Document Content\nMarkdown content here..."
+  "content": {
+    "message": "# Document Content\nMarkdown content here...",
+    "file": {
+      "name": "example.png",
+      "content": [/* file bytes */],
+      "mime_type": "image/png"
+    },
+    "url": "https://example.com"
+  }
 }
 ```
 
@@ -321,9 +345,12 @@ upvote_verification(username, content_hash, identity_server_pk, post_id, private
         "created_at": "2024-01-01T00:00:00Z",
         "pod": { /* MainPod for the document verification */ },
         "timestamp_pod": { /* SignedPod */ },
-        "user_id": "alice",
+        "uploader_id": "alice",
         "upvote_count": 5,
-        "upvote_count_pod": { /* MainPod proving upvote count */ }
+        "upvote_count_pod": { /* MainPod proving upvote count */ },
+        "tags": ["tag1", "tag2"],
+        "authors": ["alice", "bob"],
+        "reply_to": null
       }
     ]
   }
@@ -365,12 +392,80 @@ upvote_count(count, username, content_hash, identity_server_pk, post_id) = OR(
     "created_at": "2024-01-01T00:00:00Z",
     "pod": { /* MainPod with verification */ },
     "timestamp_pod": { /* Server timestamp */ },
-    "user_id": "alice",
+    "uploader_id": "alice",
     "upvote_count": 5,
-    "upvote_count_pod": { /* Upvote count proof */ }
+    "upvote_count_pod": { /* Upvote count proof */ },
+    "tags": ["tag1", "tag2"],
+    "authors": ["alice", "bob"],
+    "reply_to": null
   }
 ]
 ```
+
+#### GET `/documents/:id/replies`
+**Response:**
+```json
+[
+  {
+    "id": 2,
+    "content_id": "0x5678...",
+    "post_id": 1,
+    "revision": 1,
+    "created_at": "2024-01-01T01:00:00Z",
+    "pod": { /* MainPod with verification */ },
+    "timestamp_pod": { /* Server timestamp */ },
+    "uploader_id": "bob",
+    "upvote_count": 2,
+    "upvote_count_pod": { /* Upvote count proof */ },
+    "tags": ["reply"],
+    "authors": ["bob"],
+    "reply_to": 1
+  }
+]
+```
+
+## CLI Usage
+
+The CLI now supports multi-content documents and replies:
+
+### Publishing Content
+```bash
+# Publish with message only
+podnet-cli publish --keypair keypair.json --identity-pod identity.json --message "Hello world"
+
+# Publish with file only
+podnet-cli publish --keypair keypair.json --identity-pod identity.json --file image.png
+
+# Publish with URL only
+podnet-cli publish --keypair keypair.json --identity-pod identity.json --url https://example.com
+
+# Publish with all content types
+podnet-cli publish --keypair keypair.json --identity-pod identity.json \
+  --message "Check out this image from the website" \
+  --file screenshot.png \
+  --url https://example.com
+
+# Publish with tags and authors
+podnet-cli publish --keypair keypair.json --identity-pod identity.json \
+  --message "Team update" \
+  --tags "update,team,progress" \
+  --authors "alice,bob,charlie"
+
+# Reply to another document
+podnet-cli publish --keypair keypair.json --identity-pod identity.json \
+  --message "Great point!" \
+  --reply-to 42
+```
+
+**Note:** At least one of `--message`, `--file`, or `--url` must be provided.
+
+### Content Rendering
+The CLI now performs client-side rendering with intelligent format detection:
+- **Markdown**: Rendered using pulldown-cmark with math support
+- **HTML**: Rendered as-is
+- **Images**: Displayed as base64-encoded images
+- **JSON**: Pretty-printed with syntax highlighting
+- **Other content**: Displayed as plain text
 
 ## Database Schema
 
@@ -395,9 +490,13 @@ CREATE TABLE documents (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     pod TEXT NOT NULL,                  -- MainPod JSON proving document authenticity
     timestamp_pod TEXT NOT NULL,        -- Server SignedPod with timestamp
-    user_id TEXT NOT NULL,              -- Username of author
+    uploader_id TEXT NOT NULL,          -- Username of uploader
     upvote_count_pod TEXT,              -- MainPod JSON proving upvote count
+    tags TEXT DEFAULT '[]',             -- JSON array of tags
+    authors TEXT DEFAULT '[]',          -- JSON array of author names
+    reply_to INTEGER,                   -- Foreign key to documents table (optional)
     FOREIGN KEY (post_id) REFERENCES posts (id),
+    FOREIGN KEY (reply_to) REFERENCES documents (id),
     UNIQUE (post_id, revision)
 );
 ```

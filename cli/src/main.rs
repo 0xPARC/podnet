@@ -502,27 +502,27 @@ async fn view_post_in_browser(
 
         println!("Fetching revision {doc_revision}...");
 
-        // Get rendered version of this document
-        let render_response = client
-            .get(format!("{server_url}/documents/{doc_id}/render"))
+        // Get document content (no longer using /render endpoint)
+        let document_response = client
+            .get(format!("{server_url}/documents/{doc_id}"))
             .send()
             .await?;
 
-        if !render_response.status().is_success() {
-            let status = render_response.status();
-            let error_text = render_response.text().await?;
+        if !document_response.status().is_success() {
+            let status = document_response.status();
+            let error_text = document_response.text().await?;
             handle_error_response(
                 status,
                 &error_text,
-                &format!("retrieve rendered document {doc_id}"),
+                &format!("retrieve document {doc_id}"),
             );
             continue; // Skip this document but continue with others
         }
 
-        let rendered_document: serde_json::Value = render_response.json().await?;
+        let document_json: serde_json::Value = document_response.json().await?;
 
         // Parse the document directly using the shared types
-        let document: podnet_models::Document = serde_json::from_value(rendered_document.clone())
+        let document: podnet_models::Document = serde_json::from_value(document_json.clone())
             .map_err(|e| format!("Failed to parse document: {e}"))?;
 
         // Render the raw DocumentContent to HTML on the client side
