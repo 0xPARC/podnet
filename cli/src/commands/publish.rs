@@ -58,7 +58,7 @@ pub async fn publish_content(
 
     // Process file
     if let Some(file_path_str) = file_path {
-        println!("Reading file: {}", file_path_str);
+        println!("Reading file: {file_path_str}");
         let file_content = std::fs::read(file_path_str)?;
         let file_name = std::path::Path::new(file_path_str)
             .file_name()
@@ -91,12 +91,12 @@ pub async fn publish_content(
     // Process URL
     if let Some(url_str) = url {
         document_content.url = Some(url_str.clone());
-        println!("URL added to document: {}", url_str);
+        println!("URL added to document: {url_str}");
     }
 
     // Validate that at least one content type is provided
     document_content.validate()
-        .map_err(|e| format!("Content validation failed: {}", e))?;
+        .map_err(|e| format!("Content validation failed: {e}"))?;
 
     // Step 3: Process tags
     let document_tags: HashSet<String> = if let Some(tags_str) = tags {
@@ -268,11 +268,11 @@ pub async fn publish_content(
     let reply_to_id: Option<i64> = if let Some(reply_to_str) = reply_to {
         match reply_to_str.parse::<i64>() {
             Ok(id) => {
-                println!("Replying to document ID: {}", id);
+                println!("Replying to document ID: {id}");
                 Some(id)
             }
             Err(_) => {
-                return Err(format!("Invalid reply_to document ID: {}", reply_to_str).into());
+                return Err(format!("Invalid reply_to document ID: {reply_to_str}").into());
             }
         }
     } else {

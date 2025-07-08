@@ -628,7 +628,7 @@ async fn view_post_in_browser(
             content_id,
             created_at,
             uploader_username.to_string(),
-            format!("{}{}", html_content, replies_html),
+            format!("{html_content}{replies_html}"),
             upvote_count,
             tags,
             authors
@@ -743,7 +743,7 @@ fn render_document_content_to_html(content: &DocumentContent) -> String {
             message.clone()
         } else {
             // Treat as plain text and convert to HTML
-            format!("<pre style=\"white-space: pre-wrap; font-family: inherit;\">{}</pre>", escape_html(&message))
+            format!("<pre style=\"white-space: pre-wrap; font-family: inherit;\">{}</pre>", escape_html(message))
         };
         html_parts.push(rendered_message);
     }
@@ -839,9 +839,8 @@ fn render_document_content_to_html(content: &DocumentContent) -> String {
         let url_html = format!(
             r#"<div class="url-reference" style="margin: 20px 0; padding: 15px; background-color: #f8f9fa; border-left: 4px solid #007bff; border-radius: 5px;">
                 <h4 style="margin: 0 0 10px 0; color: #004085;">🔗 Referenced URL</h4>
-                <p style="margin: 0;"><a href="{}" target="_blank" style="color: #007bff; text-decoration: none; font-weight: 500;">{}</a></p>
-            </div>"#,
-            url, url
+                <p style="margin: 0;"><a href="{url}" target="_blank" style="color: #007bff; text-decoration: none; font-weight: 500;">{url}</a></p>
+            </div>"#
         );
         html_parts.push(url_html);
     }
