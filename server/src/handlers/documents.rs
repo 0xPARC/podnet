@@ -7,7 +7,6 @@ use pod_utils::ValueExt;
 use podnet_models::{
     Document, DocumentMetadata, PublishRequest, get_publish_verification_predicate,
 };
-use pulldown_cmark::{Event, Options, Parser, html};
 use std::sync::Arc;
 
 pub async fn get_documents(
@@ -42,71 +41,18 @@ pub async fn get_document_by_id(
     Ok(Json(document))
 }
 
-pub async fn get_rendered_document_by_id(
-    Path(id): Path<i64>,
-    State(state): State<Arc<crate::AppState>>,
-) -> Result<Json<Document>, StatusCode> {
-    let mut document = get_document_from_db(id, state).await?;
-
-    let mut options = Options::empty();
-    options.insert(Options::ENABLE_TABLES);
-    options.insert(Options::ENABLE_STRIKETHROUGH);
-    options.insert(Options::ENABLE_TABLES);
-    options.insert(Options::ENABLE_FOOTNOTES);
-    options.insert(Options::ENABLE_SUPERSCRIPT);
-    options.insert(Options::ENABLE_TASKLISTS);
-    options.insert(Options::ENABLE_GFM);
-    options.insert(Options::ENABLE_SMART_PUNCTUATION);
-    options.insert(Options::ENABLE_HEADING_ATTRIBUTES);
-
-    let content = &document.content;
-
-    let parser = Parser::new_ext(content, options);
-    let mut events = Vec::new();
-    let mut in_math = false;
-    let mut math_content = String::new();
-
-    // skip math
-    for event in parser {
-        match event {
-            Event::Text(text) => {
-                let text_str = text.as_ref();
-                if text_str.starts_with("$$") {
-                    in_math = true;
-                    math_content = text_str.to_string();
-                } else if text_str.ends_with("$$") && in_math {
-                    math_content.push_str(text_str);
-                    events.push(Event::Html(math_content.clone().into()));
-                    math_content.clear();
-                    in_math = false;
-                } else if in_math {
-                    math_content.push_str(text_str);
-                } else {
-                    events.push(Event::Text(text));
-                }
-            }
-            _ if in_math => {
-                // Skip other events while in math mode
-                continue;
-            }
-            other => events.push(other),
-        }
-    }
-
-    let mut html_output = String::new();
-    html::push_html(&mut html_output, events.into_iter());
-    document.content = html_output.clone();
-
-    Ok(Json(document))
-}
-
 pub async fn publish_document(
     State(state): State<Arc<crate::AppState>>,
     Json(payload): Json<PublishRequest>,
 ) -> Result<Json<Document>, StatusCode> {
-
     log::info!("Starting document publish with main pod verification");
-    log::debug!("Content length: {} bytes", payload.content.len());
+
+    // Validate the document content
+    payload.content.validate().map_err(|e| {
+        log::error!("Document content validation failed: {e}");
+        StatusCode::BAD_REQUEST
+    })?;
+    log::info!("✓ Document content validated");
 
     let (_vd_set, _prover) = state.pod_config.get_prover_setup()?;
 
@@ -120,19 +66,21 @@ pub async fn publish_document(
 
     // Extract public data using the macro
     log::info!("Extracting public data from main pod");
-    let (uploader_username, content_hash, identity_server_pk, post_id, _tags) = podnet_models::extract_mainpod_args!(
-        &payload.main_pod,
-        get_publish_verification_predicate(),
-        "publish_verification",
-        username: as_str,
-        content_hash: as_hash,
-        identity_server_pk: as_public_key,
-        post_id: as_i64,
-        tags: as_set
-    ).map_err(|e| {
-        log::error!("Failed to extract publish verification arguments: {e}");
-        StatusCode::BAD_REQUEST
-    })?;
+    let (uploader_username, content_hash, identity_server_pk, post_id, _tags) =
+        podnet_models::extract_mainpod_args!(
+            &payload.main_pod,
+            get_publish_verification_predicate(),
+            "publish_verification",
+            username: as_str,
+            content_hash: as_hash,
+            identity_server_pk: as_public_key,
+            post_id: as_i64,
+            tags: as_set
+        )
+        .map_err(|e| {
+            log::error!("Failed to extract publish verification arguments: {e}");
+            StatusCode::BAD_REQUEST
+        })?;
 
     log::info!(
         "✓ Extracted public data: uploader_username={uploader_username}, content_hash={content_hash}, post_id={post_id}"
@@ -167,10 +115,13 @@ pub async fn publish_document(
 
     // Store the content and get its hash
     log::info!("Storing content in content-addressed storage");
-    let stored_content_hash = state.storage.store(&payload.content).map_err(|e| {
-        log::error!("Failed to store content: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let stored_content_hash = state
+        .storage
+        .store_document_content(&payload.content)
+        .map_err(|e| {
+            log::error!("Failed to store content: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     log::info!("Content stored successfully with hash: {stored_content_hash}");
 
     // Verify content hash matches what's in the main pod

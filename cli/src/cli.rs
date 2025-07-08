@@ -40,25 +40,6 @@ pub fn optional_post_id_arg() -> Arg {
         .long("post-id")
 }
 
-pub fn content_args() -> Vec<Arg> {
-    vec![
-        Arg::new("content")
-            .help("Content to publish")
-            .short('c')
-            .long("content")
-            .conflicts_with("file"),
-        Arg::new("file")
-            .help("File to publish (supports Markdown, LaTeX, Typst)")
-            .short('f')
-            .long("file")
-            .conflicts_with("content"),
-        Arg::new("format")
-            .help("Force document format (markdown, latex, typst). If not specified, format will be auto-detected.")
-            .long("format")
-            .value_parser(["markdown", "latex", "typst"]),
-    ]
-}
-
 pub fn identity_pod_arg() -> Arg {
     Arg::new("identity_pod")
         .help("Path to identity pod file")

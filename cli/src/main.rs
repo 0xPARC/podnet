@@ -6,7 +6,8 @@ mod verification;
 
 use clap::{Arg, Command};
 use hex::ToHex;
-use podnet_models::{mainpod::publish::verify_publish_verification, mainpod::upvote_count::verify_upvote_count};
+use podnet_models::{mainpod::publish::verify_publish_verification, mainpod::upvote_count::verify_upvote_count, DocumentContent};
+use pulldown_cmark::{Event, Options, Parser, html};
 
 use cli::*;
 use commands::{keygen, identity, documents, posts, publish, upvote};
@@ -302,8 +303,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .short('r')
                         .long("reply-to")
                         .value_name("DOCUMENT_ID"),
-                ])
-                .args(content_args()),
+                    Arg::new("message")
+                        .help("Text message content")
+                        .short('m')
+                        .long("message")
+                        .value_name("MESSAGE"),
+                    Arg::new("file")
+                        .help("File to attach")
+                        .short('f')
+                        .long("file")
+                        .value_name("FILE_PATH"),
+                    Arg::new("url")
+                        .help("URL to reference")
+                        .short('u')
+                        .long("url")
+                        .value_name("URL"),
+                    Arg::new("format")
+                        .help("Format override for message content")
+                        .long("format")
+                        .value_name("FORMAT"),
+                ]),
         )
         .subcommand(
             Command::new("get-post")
@@ -377,8 +396,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(("publish", sub_matches)) => {
             let keypair_file = sub_matches.get_one::<String>("keypair").unwrap();
-            let content = get_content_from_args(sub_matches)?;
+            let message = sub_matches.get_one::<String>("message");
             let file_path = sub_matches.get_one::<String>("file");
+            let url = sub_matches.get_one::<String>("url");
             let format_override = sub_matches.get_one::<String>("format");
             let server = sub_matches.get_one::<String>("server").unwrap();
             let post_id = sub_matches.get_one::<String>("post_id");
@@ -387,7 +407,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let tags = sub_matches.get_one::<String>("tags");
             let authors = sub_matches.get_one::<String>("authors");
             let reply_to = sub_matches.get_one::<String>("reply_to");
-            publish::publish_content(keypair_file, &content, file_path, format_override, server, post_id, identity_pod_file, use_mock, tags, authors, reply_to).await?;
+
+            // Validate that at least one content type is provided
+            if message.is_none() && file_path.is_none() && url.is_none() {
+                return Err("At least one of --message, --file, or --url must be provided".into());
+            }
+
+            publish::publish_content(keypair_file, message, file_path, url, format_override, server, post_id, identity_pod_file, use_mock, tags, authors, reply_to).await?;
         }
         Some(("get-post", sub_matches)) => {
             let post_id = sub_matches.get_one::<String>("post_id").unwrap();
@@ -428,18 +454,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
-}
-
-
-fn get_content_from_args(matches: &clap::ArgMatches) -> Result<String, Box<dyn std::error::Error>> {
-    if let Some(content) = matches.get_one::<String>("content") {
-        Ok(content.clone())
-    } else if let Some(file_path) = matches.get_one::<String>("file") {
-        let content = std::fs::read_to_string(file_path)?;
-        Ok(content)
-    } else {
-        Err("Either --content or --file must be provided".into())
-    }
 }
 
 async fn view_post_in_browser(
@@ -511,7 +525,8 @@ async fn view_post_in_browser(
         let document: podnet_models::Document = serde_json::from_value(rendered_document.clone())
             .map_err(|e| format!("Failed to parse document: {e}"))?;
 
-        let html_content = &document.content;
+        // Render the raw DocumentContent to HTML on the client side
+        let html_content = render_document_content_to_html(&document.content);
         
         let content_id = document.metadata.content_id;
         let created_at = document.metadata.created_at.as_deref().unwrap_or("Unknown").to_string();
@@ -576,8 +591,13 @@ async fn view_post_in_browser(
                         
                         let reply_content = if let Ok(reply_resp) = reply_response {
                             if reply_resp.status().is_success() {
-                                if let Ok(reply_doc) = reply_resp.json::<serde_json::Value>().await {
-                                    reply_doc.get("content").and_then(|v| v.as_str()).unwrap_or("Error loading reply content").to_string()
+                                if let Ok(reply_doc_value) = reply_resp.json::<serde_json::Value>().await {
+                                    // Try to parse as Document and render the content
+                                    if let Ok(reply_doc) = serde_json::from_value::<podnet_models::Document>(reply_doc_value) {
+                                        render_document_content_to_html(&reply_doc.content)
+                                    } else {
+                                        "Error parsing reply document".to_string()
+                                    }
                                 } else {
                                     "Error parsing reply content".to_string()
                                 }
@@ -709,5 +729,227 @@ async fn view_post_in_browser(
     }
 
     Ok(())
+}
+
+fn render_document_content_to_html(content: &DocumentContent) -> String {
+    let mut html_parts = Vec::new();
+
+    // Render message content with format detection
+    if let Some(ref message) = content.message {
+        let rendered_message = if is_markdown(message) {
+            render_markdown_to_html(message)
+        } else if is_html(message) {
+            // Just use the HTML as-is (but could add sanitization here)
+            message.clone()
+        } else {
+            // Treat as plain text and convert to HTML
+            format!("<pre style=\"white-space: pre-wrap; font-family: inherit;\">{}</pre>", escape_html(&message))
+        };
+        html_parts.push(rendered_message);
+    }
+
+    // Render file content
+    if let Some(ref file) = content.file {
+        let file_html = if file.mime_type.starts_with("image/") {
+            // For images, create a data URL to display them
+            let base64_content = base64_encode(&file.content);
+            format!(
+                r#"<div class="file-attachment" style="margin: 20px 0; padding: 15px; background-color: #f8f9fa; border-left: 4px solid #28a745; border-radius: 5px;">
+                    <h4 style="margin: 0 0 10px 0; color: #155724;">📎 Image: {}</h4>
+                    <p style="margin: 5px 0; color: #666;">
+                        <strong>Type:</strong> {} | <strong>Size:</strong> {} bytes
+                    </p>
+                    <img src="data:{};base64,{}" alt="{}" style="max-width: 100%; height: auto; border: 1px solid #ddd; border-radius: 3px;" />
+                </div>"#,
+                file.name, file.mime_type, file.content.len(), file.mime_type, base64_content, file.name
+            )
+        } else if file.mime_type == "text/plain" {
+            // Display plain text files
+            let file_content = String::from_utf8_lossy(&file.content);
+            format!(
+                r#"<div class="file-attachment" style="margin: 20px 0; padding: 15px; background-color: #f8f9fa; border-left: 4px solid #28a745; border-radius: 5px;">
+                    <h4 style="margin: 0 0 10px 0; color: #155724;">📎 Text File: {}</h4>
+                    <p style="margin: 5px 0; color: #666;">
+                        <strong>Type:</strong> {} | <strong>Size:</strong> {} bytes
+                    </p>
+                    <details><summary>View file content</summary>
+                    <pre style="margin: 10px 0; padding: 10px; background-color: #fff; border: 1px solid #ddd; border-radius: 3px; overflow-x: auto; white-space: pre-wrap;"><code>{}</code></pre>
+                    </details>
+                </div>"#,
+                file.name, file.mime_type, file.content.len(), escape_html(&file_content)
+            )
+        } else if file.mime_type == "text/markdown" {
+            // Render markdown files
+            let file_content = String::from_utf8_lossy(&file.content);
+            let rendered_markdown = render_markdown_to_html(&file_content);
+            format!(
+                r#"<div class="file-attachment" style="margin: 20px 0; padding: 15px; background-color: #f8f9fa; border-left: 4px solid #28a745; border-radius: 5px;">
+                    <h4 style="margin: 0 0 10px 0; color: #155724;">📎 Markdown File: {}</h4>
+                    <p style="margin: 5px 0; color: #666;">
+                        <strong>Type:</strong> {} | <strong>Size:</strong> {} bytes
+                    </p>
+                    <details open><summary>Rendered content</summary>
+                    <div style="margin: 10px 0; padding: 10px; background-color: #fff; border: 1px solid #ddd; border-radius: 3px;">
+                        {}
+                    </div>
+                    </details>
+                    <details><summary>View raw markdown</summary>
+                    <pre style="margin: 10px 0; padding: 10px; background-color: #fff; border: 1px solid #ddd; border-radius: 3px; overflow-x: auto; white-space: pre-wrap;"><code>{}</code></pre>
+                    </details>
+                </div>"#,
+                file.name, file.mime_type, file.content.len(), rendered_markdown, escape_html(&file_content)
+            )
+        } else if file.mime_type == "application/json" {
+            // Pretty-print JSON files
+            let file_content = String::from_utf8_lossy(&file.content);
+            let formatted_json = match serde_json::from_str::<serde_json::Value>(&file_content) {
+                Ok(json) => serde_json::to_string_pretty(&json).unwrap_or_else(|_| file_content.to_string()),
+                Err(_) => file_content.to_string(),
+            };
+            format!(
+                r#"<div class="file-attachment" style="margin: 20px 0; padding: 15px; background-color: #f8f9fa; border-left: 4px solid #28a745; border-radius: 5px;">
+                    <h4 style="margin: 0 0 10px 0; color: #155724;">📎 JSON File: {}</h4>
+                    <p style="margin: 5px 0; color: #666;">
+                        <strong>Type:</strong> {} | <strong>Size:</strong> {} bytes
+                    </p>
+                    <details><summary>View JSON content</summary>
+                    <pre style="margin: 10px 0; padding: 10px; background-color: #fff; border: 1px solid #ddd; border-radius: 3px; overflow-x: auto; white-space: pre-wrap;"><code>{}</code></pre>
+                    </details>
+                </div>"#,
+                file.name, file.mime_type, file.content.len(), escape_html(&formatted_json)
+            )
+        } else {
+            // For other file types, just show metadata
+            format!(
+                r#"<div class="file-attachment" style="margin: 20px 0; padding: 15px; background-color: #f8f9fa; border-left: 4px solid #28a745; border-radius: 5px;">
+                    <h4 style="margin: 0 0 10px 0; color: #155724;">📎 File: {}</h4>
+                    <p style="margin: 5px 0; color: #666;">
+                        <strong>Type:</strong> {} | <strong>Size:</strong> {} bytes
+                    </p>
+                    <p style="margin: 5px 0; color: #666;"><em>Preview not available for this file type</em></p>
+                </div>"#,
+                file.name, file.mime_type, file.content.len()
+            )
+        };
+        html_parts.push(file_html);
+    }
+
+    // Render URL content
+    if let Some(ref url) = content.url {
+        let url_html = format!(
+            r#"<div class="url-reference" style="margin: 20px 0; padding: 15px; background-color: #f8f9fa; border-left: 4px solid #007bff; border-radius: 5px;">
+                <h4 style="margin: 0 0 10px 0; color: #004085;">🔗 Referenced URL</h4>
+                <p style="margin: 0;"><a href="{}" target="_blank" style="color: #007bff; text-decoration: none; font-weight: 500;">{}</a></p>
+            </div>"#,
+            url, url
+        );
+        html_parts.push(url_html);
+    }
+
+    if html_parts.is_empty() {
+        "<p>No content available</p>".to_string()
+    } else {
+        html_parts.join("\n")
+    }
+}
+
+fn render_markdown_to_html(markdown: &str) -> String {
+    let mut options = Options::empty();
+    options.insert(Options::ENABLE_TABLES);
+    options.insert(Options::ENABLE_STRIKETHROUGH);
+    options.insert(Options::ENABLE_FOOTNOTES);
+    options.insert(Options::ENABLE_TASKLISTS);
+    options.insert(Options::ENABLE_SMART_PUNCTUATION);
+    options.insert(Options::ENABLE_HEADING_ATTRIBUTES);
+
+    let parser = Parser::new_ext(markdown, options);
+    let mut events = Vec::new();
+    let mut in_math = false;
+    let mut math_content = String::new();
+
+    // Process markdown with math support
+    for event in parser {
+        match event {
+            Event::Text(text) => {
+                let text_str = text.as_ref();
+                if text_str.starts_with("$$") {
+                    in_math = true;
+                    math_content = text_str.to_string();
+                } else if text_str.ends_with("$$") && in_math {
+                    math_content.push_str(text_str);
+                    events.push(Event::Html(math_content.clone().into()));
+                    math_content.clear();
+                    in_math = false;
+                } else if in_math {
+                    math_content.push_str(text_str);
+                } else {
+                    events.push(Event::Text(text));
+                }
+            }
+            _ if in_math => continue,
+            other => events.push(other),
+        }
+    }
+
+    let mut html_output = String::new();
+    html::push_html(&mut html_output, events.into_iter());
+    html_output
+}
+
+fn is_markdown(text: &str) -> bool {
+    // Simple heuristics to detect markdown
+    text.contains("# ") || text.contains("## ") || text.contains("**") || 
+    text.contains("*") || text.contains("[") || text.contains("`") ||
+    text.contains("- ") || text.contains("1. ")
+}
+
+fn is_html(text: &str) -> bool {
+    // Simple heuristics to detect HTML
+    text.contains("<") && text.contains(">") && (
+        text.contains("<p>") || text.contains("<div>") || text.contains("<h1>") ||
+        text.contains("<span>") || text.contains("<br>") || text.contains("</")
+    )
+}
+
+fn escape_html(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+fn base64_encode(data: &[u8]) -> String {
+    // Simple base64 encoding (in a real implementation, you'd use a proper base64 crate)
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut result = String::new();
+    
+    for chunk in data.chunks(3) {
+        let mut buf = [0u8; 3];
+        for (i, &byte) in chunk.iter().enumerate() {
+            buf[i] = byte;
+        }
+        
+        let b0 = buf[0] as usize;
+        let b1 = buf[1] as usize;
+        let b2 = buf[2] as usize;
+        
+        result.push(ALPHABET[b0 >> 2] as char);
+        result.push(ALPHABET[((b0 & 0x03) << 4) | (b1 >> 4)] as char);
+        
+        if chunk.len() > 1 {
+            result.push(ALPHABET[((b1 & 0x0f) << 2) | (b2 >> 6)] as char);
+        } else {
+            result.push('=');
+        }
+        
+        if chunk.len() > 2 {
+            result.push(ALPHABET[b2 & 0x3f] as char);
+        } else {
+            result.push('=');
+        }
+    }
+    
+    result
 }
 

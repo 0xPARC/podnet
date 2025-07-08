@@ -215,7 +215,7 @@ impl Database {
 
         // Retrieve content from storage
         let content = storage
-            .retrieve(content_id)
+            .retrieve_document_content(content_id)
             .map_err(|_| {
                 rusqlite::Error::InvalidColumnType(
                     0,
@@ -599,7 +599,7 @@ impl Database {
 
                 // Retrieve content from storage
                 let content = storage
-                    .retrieve(&content_hash)
+                    .retrieve_document_content(&content_hash)
                     .map_err(|_| {
                         rusqlite::Error::InvalidColumnType(
                             0,

@@ -9,13 +9,15 @@ use podnet_models::mainpod::publish::{PublishProofParams, prove_publish_verifica
 use std::collections::HashSet;
 use std::fs::File;
 
-use crate::conversion::{DocumentFormat, convert_to_markdown, detect_format};
+use crate::conversion::{DocumentFormat, convert_to_markdown};
 use crate::utils::handle_error_response;
+use podnet_models::{DocumentContent, DocumentFile};
 
 pub async fn publish_content(
     keypair_file: &str,
-    content: &str,
+    message: Option<&String>,
     file_path: Option<&String>,
+    url: Option<&String>,
     format_override: Option<&String>,
     server_url: &str,
     post_id: Option<&String>,
@@ -27,33 +29,74 @@ pub async fn publish_content(
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("Publishing content to server using main pod verification...");
 
-    // Step 1: Determine document format
-    let detected_format = if let Some(format_str) = format_override {
-        DocumentFormat::from_str(format_str)
-            .ok_or_else(|| format!("Invalid format: {format_str}"))?
-    } else {
-        detect_format(content, file_path.map(|s| s.as_str()))
+    // Step 1: Build DocumentContent from provided inputs
+    let mut document_content = DocumentContent {
+        message: None,
+        file: None,
+        url: None,
     };
 
-    println!("Detected format: {detected_format:?}");
-
-    // Step 2: Convert to Markdown only if necessary
-    let markdown_content = if detected_format != DocumentFormat::Markdown {
-        let converted = convert_to_markdown(content, &detected_format)?;
-        println!("✓ Content converted from {detected_format:?} to Markdown");
-        println!(
-            "Converted content preview: {}",
-            if converted.len() > 200 {
-                format!("{}...", &converted[0..200])
+    // Process message
+    if let Some(msg) = message {
+        // Handle format conversion if needed
+        let processed_message = if let Some(format_str) = format_override {
+            let detected_format = DocumentFormat::from_str(format_str)
+                .ok_or_else(|| format!("Invalid format: {format_str}"))?;
+            if detected_format != DocumentFormat::Markdown {
+                let converted = convert_to_markdown(msg, &detected_format)?;
+                println!("✓ Message converted from {detected_format:?} to Markdown");
+                converted
             } else {
-                converted.clone()
+                msg.clone()
             }
-        );
-        converted
-    } else {
-        println!("Content is already in Markdown format");
-        content.to_string()
-    };
+        } else {
+            msg.clone()
+        };
+        document_content.message = Some(processed_message);
+        println!("Message added to document");
+    }
+
+    // Process file
+    if let Some(file_path_str) = file_path {
+        println!("Reading file: {}", file_path_str);
+        let file_content = std::fs::read(file_path_str)?;
+        let file_name = std::path::Path::new(file_path_str)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        
+        // Detect MIME type based on file extension
+        let mime_type = match std::path::Path::new(file_path_str)
+            .extension()
+            .and_then(|ext| ext.to_str())
+        {
+            Some("txt") => "text/plain",
+            Some("md") => "text/markdown",
+            Some("jpg") | Some("jpeg") => "image/jpeg",
+            Some("png") => "image/png",
+            Some("pdf") => "application/pdf",
+            Some("json") => "application/json",
+            _ => "application/octet-stream",
+        }.to_string();
+
+        document_content.file = Some(DocumentFile {
+            name: file_name,
+            content: file_content,
+            mime_type,
+        });
+        println!("File added to document");
+    }
+
+    // Process URL
+    if let Some(url_str) = url {
+        document_content.url = Some(url_str.clone());
+        println!("URL added to document: {}", url_str);
+    }
+
+    // Validate that at least one content type is provided
+    document_content.validate()
+        .map_err(|e| format!("Content validation failed: {}", e))?;
 
     // Step 3: Process tags
     let document_tags: HashSet<String> = if let Some(tags_str) = tags {
@@ -77,9 +120,6 @@ pub async fn publish_content(
         );
     }
 
-    // Use the converted markdown content for the rest of the process
-    let content = &markdown_content;
-
     // Load and verify identity pod
     println!("Loading identity pod from: {identity_pod_file}");
     let identity_pod_json = std::fs::read_to_string(identity_pod_file)?;
@@ -98,7 +138,9 @@ pub async fn publish_content(
 
     println!("Username: {username}");
 
-    let content_hash = hash_values(&[Value::from(content.clone())]);
+    // Compute content hash from the entire DocumentContent structure
+    let content_json = serde_json::to_string(&document_content)?;
+    let content_hash = hash_values(&[Value::from(content_json)]);
     // Load keypair from file
     let file = File::open(keypair_file)?;
     let keypair_data: serde_json::Value = serde_json::from_reader(file)?;
@@ -240,7 +282,7 @@ pub async fn publish_content(
     println!("Serializing main pod");
     // Create the publish request with main pod
     let payload = serde_json::json!({
-        "content": content,
+        "content": document_content,
         "tags": document_tags,
         "authors": document_authors,
         "reply_to": reply_to_id,

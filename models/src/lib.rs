@@ -7,6 +7,48 @@ use pod2::backends::plonky2::primitives::ec::curve::Point as PublicKey;
 use pod2::frontend::{MainPod, SignedPod};
 use pod2::middleware::{Hash, KEY_SIGNER, KEY_TYPE, PodType};
 
+/// File attachment within a document
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentFile {
+    pub name: String,        // Original filename
+    pub content: Vec<u8>,    // File bytes (base64 encoded in JSON)
+    pub mime_type: String,   // MIME type
+}
+
+/// Multi-content document structure supporting messages, files, and URLs
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentContent {
+    pub message: Option<String>,     // Text message
+    pub file: Option<DocumentFile>,  // File attachment  
+    pub url: Option<String>,         // URL reference
+}
+
+impl DocumentContent {
+    /// Validate that at least one content type is provided
+    pub fn validate(&self) -> Result<(), String> {
+        if self.message.is_none() && self.file.is_none() && self.url.is_none() {
+            return Err("At least one of message, file, or url must be provided".to_string());
+        }
+        
+        // Validate file size (max 10MB)
+        if let Some(ref file) = self.file {
+            const MAX_FILE_SIZE: usize = 10 * 1024 * 1024; // 10MB
+            if file.content.len() > MAX_FILE_SIZE {
+                return Err(format!("File size {} exceeds maximum allowed size of {}", file.content.len(), MAX_FILE_SIZE));
+            }
+        }
+        
+        // Validate URL format
+        if let Some(ref url) = self.url {
+            if !url.starts_with("http://") && !url.starts_with("https://") {
+                return Err("URL must start with http:// or https://".to_string());
+            }
+        }
+        
+        Ok(())
+    }
+}
+
 /// Main pod operations and verification utilities
 pub mod mainpod;
 
@@ -83,12 +125,12 @@ pub struct DocumentMetadata {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Document {
     pub metadata: DocumentMetadata,
-    pub content: String, // Retrieved from storage
+    pub content: DocumentContent, // Retrieved from storage
 }
 
 #[derive(Debug, Deserialize)]
 pub struct PublishRequest {
-    pub content: String,
+    pub content: DocumentContent,
     pub tags: HashSet<String>,    // Set of tags for document organization
     pub authors: HashSet<String>, // Set of authors for document attribution
     pub reply_to: Option<i64>,    // Document ID this document is replying to

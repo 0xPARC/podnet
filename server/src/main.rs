@@ -23,8 +23,9 @@ pub struct AppState {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
         .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "podnet_server=debug,tower_http=debug,axum::routing=trace".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                "podnet_server=debug,tower_http=debug,axum::routing=trace".into()
+            }),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
@@ -44,7 +45,12 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Content storage initialized successfully");
 
     let pod_config = pod::PodConfig::new(config.mock_proofs);
-    let state = Arc::new(AppState { db, storage, config, pod_config });
+    let state = Arc::new(AppState {
+        db,
+        storage,
+        config,
+        pod_config,
+    });
 
     tracing::info!("Setting up routes...");
     let app = Router::new()
@@ -56,10 +62,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/documents", get(handlers::get_documents))
         .route("/documents/:id", get(handlers::get_document_by_id))
         .route(
-            "/documents/:id/render",
-            get(handlers::get_rendered_document_by_id),
+            "/documents/:id/replies",
+            get(handlers::get_document_replies),
         )
-        .route("/documents/:id/replies", get(handlers::get_document_replies))
         // Publishing route
         .route("/publish", post(handlers::publish_document))
         // Identity server routes
@@ -85,7 +90,6 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("  GET  /posts/:id              - Get post with documents");
     tracing::info!("  GET  /documents              - List all documents");
     tracing::info!("  GET  /documents/:id          - Get specific document");
-    tracing::info!("  GET  /documents/:id/render   - Get rendered document HTML");
     tracing::info!("  GET  /documents/:id/replies  - Get replies to a document");
     tracing::info!("  POST /publish                - Publish new document");
     tracing::info!("  POST /identity/challenge     - Request challenge for identity server");
