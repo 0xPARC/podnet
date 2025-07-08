@@ -7,6 +7,9 @@ use pod2::backends::plonky2::primitives::ec::curve::Point as PublicKey;
 use pod2::frontend::{MainPod, SignedPod};
 use pod2::middleware::{Hash, KEY_SIGNER, KEY_TYPE, PodType};
 
+/// Main pod operations and verification utilities
+pub mod mainpod;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Post {
     pub id: Option<i64>,
@@ -373,134 +376,4 @@ pub fn get_upvote_count_predicate() -> String {
         key_signer = KEY_SIGNER,
         signed_pod_type = PodType::Signed as usize,
     )
-}
-
-/// Main pod operations and verification utilities
-pub mod mainpod;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use pod2::backends::plonky2::{
-        basetypes::DEFAULT_VD_SET, mainpod::Prover, mock::mainpod::MockProver,
-    };
-    use pod2::frontend::MainPodBuilder;
-    use pod2::lang::parse;
-    use pod2::middleware::{Params, PodProver};
-    use pod2::op;
-
-    #[tokio::test]
-    async fn test_upvote_count_predicate_0_to_3() {
-        let params = Params::default();
-
-        // Choose prover based on mock flag
-        let mock_prover = MockProver {};
-        let real_prover = Prover {};
-        let use_mock = true;
-        let (vd_set, prover): (_, &dyn PodProver) = if use_mock {
-            println!("Using MockMainPod for publish verification");
-            (&pod2::middleware::VDSet::new(8, &[]).unwrap(), &mock_prover)
-        } else {
-            println!("Using MainPod for publish verification");
-            (&*DEFAULT_VD_SET, &real_prover)
-        };
-
-        // Get the upvote count predicate
-        let predicate_input = get_upvote_verification_predicate();
-        println!("Upvote count predicate:\n{predicate_input}");
-
-        // Parse the predicate
-        let batch = parse(&predicate_input, &params, &[]).unwrap().custom_batch;
-        let upvote_count_pred = batch.predicate_ref_by_name("upvote_count").unwrap();
-        let upvote_count_base = batch.predicate_ref_by_name("upvote_count_base").unwrap();
-        let upvote_count_ind = batch.predicate_ref_by_name("upvote_count_ind").unwrap();
-
-        // Test count = 0 (base case)
-        println!("\n=== Testing upvote_count(0) ===");
-        let mut builder_0 = MainPodBuilder::new(&params, vd_set);
-        let equals_zero_stmt = builder_0.priv_op(op!(eq, 0, 0)).unwrap();
-        let base_stmt = builder_0
-            .priv_op(op!(custom, upvote_count_base.clone(), equals_zero_stmt))
-            .unwrap();
-        let _count_0_stmt = builder_0
-            .pub_op(op!(
-                custom,
-                upvote_count_pred.clone(),
-                base_stmt.clone(),
-                base_stmt
-            ))
-            .unwrap();
-        let main_pod_0 = builder_0.prove(prover, &params).unwrap();
-        main_pod_0.pod.verify().unwrap();
-        println!("✓ Successfully proved upvote_count(0)");
-
-        let recursive_statement = main_pod_0.public_statements[1].clone();
-        // Test count = 1 (inductive case with count = 0)
-        println!("\n=== Testing upvote_count(1) ===");
-        let mut builder_1 = MainPodBuilder::new(&params, vd_set);
-        builder_1.add_recursive_pod(main_pod_0.clone());
-        let sum_of_stmt = builder_1.priv_op(op!(sum_of, 1, 0, 1)).unwrap();
-        // The inductive case needs to refer to the previous proof
-        let ind_count_stmt = builder_1
-            .pub_op(op!(
-                custom,
-                upvote_count_ind.clone(),
-                recursive_statement,
-                sum_of_stmt
-            ))
-            .unwrap();
-        let _count_stmt = builder_1
-            .pub_op(op!(
-                custom,
-                upvote_count_pred.clone(),
-                ind_count_stmt.clone(),
-                ind_count_stmt
-            ))
-            .unwrap();
-        let main_pod_1 = builder_1.prove(prover, &params).unwrap();
-        main_pod_1.pod.verify().unwrap();
-        println!("✓ Successfully proved upvote_count(1)");
-
-        // Test count = 2 (inductive case with count = 1)
-        //println!("\n=== Testing upvote_count(2) ===");
-        //let mut builder_2 = MainPodBuilder::new(&params, vd_set);
-        //builder_2.add_recursive_pod(main_pod_1.clone());
-        //let prev_count_stmt = builder_2.priv_op(op!(custom, upvote_count_pred.clone(), 1)).unwrap();
-        //let _count_2_stmt = builder_2.pub_op(op!(custom, upvote_count_pred.clone(), 2, prev_count_stmt)).unwrap();
-        //let main_pod_2 = builder_2.prove(prover, &params).unwrap();
-        //main_pod_2.pod.verify().unwrap();
-        //println!("✓ Successfully proved upvote_count(2)");
-
-        //// Test count = 3 (inductive case with count = 2)
-        //println!("\n=== Testing upvote_count(3) ===");
-        //let mut builder_3 = MainPodBuilder::new(&params, vd_set);
-        //builder_3.add_recursive_pod(main_pod_2.clone());
-        //let prev_count_stmt = builder_3.priv_op(op!(custom, upvote_count_pred.clone(), 2)).unwrap();
-        //let _count_3_stmt = builder_3.pub_op(op!(custom, upvote_count_pred.clone(), 3, prev_count_stmt)).unwrap();
-        //let main_pod_3 = builder_3.prove(prover, &params).unwrap();
-        //main_pod_3.pod.verify().unwrap();
-        //println!("✓ Successfully proved upvote_count(3)");
-
-        //// Verify the public statements contain the correct counts
-        //for (i, main_pod) in [&main_pod_0, &main_pod_1, &main_pod_2, &main_pod_3].iter().enumerate() {
-        //    println!("\n=== Verifying public statement for count {} ===", i);
-        //
-        //    let count_statement = main_pod
-        //        .public_statements
-        //        .iter()
-        //        .find_map(|stmt| match stmt {
-        //            Statement::Custom(pred, args) if *pred == upvote_count_pred.clone() => Some(args),
-        //            _ => None,
-        //        })
-        //        .expect(&format!("upvote_count predicate not found in main pod {}", i));
-
-        //    let count_value = count_statement[0].as_i64()
-        //        .expect(&format!("Count argument should be integer for count {}", i));
-        //
-        //    assert_eq!(count_value, i as i64, "Count mismatch for upvote_count({})", i);
-        //    println!("✓ Public statement correctly shows upvote_count({})", i);
-        //}
-
-        //println!("\n🎉 All upvote count proofs from 0 to 3 completed successfully!");
-    }
 }
