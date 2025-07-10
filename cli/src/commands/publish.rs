@@ -4,14 +4,20 @@ use pod_utils::prover_setup::PodNetProverSetup;
 use pod2::backends::plonky2::primitives::ec::schnorr::SecretKey;
 use pod2::backends::plonky2::signedpod::Signer;
 use pod2::frontend::{SignedPod, SignedPodBuilder};
+use pod2::middleware::Key;
+use pod2::middleware::containers::Dictionary;
 use pod2::middleware::{KEY_SIGNER, Value, containers::Set, hash_values};
-use podnet_models::mainpod::publish::{PublishProofParams, prove_publish_verification};
-use std::collections::HashSet;
+use podnet_models::mainpod::publish::{
+    PublishProofParams, prove_publish_verification, prove_publish_verification_with_solver,
+    verify_publish_verification_with_solver,
+};
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 
 use crate::conversion::{DocumentFormat, convert_to_markdown};
 use crate::utils::handle_error_response;
-use podnet_models::{DocumentContent, DocumentFile};
+use podnet_models::signed_pod;
+use podnet_models::{DocumentContent, DocumentFile, PublishRequest};
 
 pub async fn publish_content(
     keypair_file: &str,
@@ -65,7 +71,7 @@ pub async fn publish_content(
             .and_then(|name| name.to_str())
             .unwrap_or("unknown")
             .to_string();
-        
+
         // Detect MIME type based on file extension
         let mime_type = match std::path::Path::new(file_path_str)
             .extension()
@@ -78,7 +84,8 @@ pub async fn publish_content(
             Some("pdf") => "application/pdf",
             Some("json") => "application/json",
             _ => "application/octet-stream",
-        }.to_string();
+        }
+        .to_string();
 
         document_content.file = Some(DocumentFile {
             name: file_name,
@@ -95,7 +102,8 @@ pub async fn publish_content(
     }
 
     // Validate that at least one content type is provided
-    document_content.validate()
+    document_content
+        .validate()
         .map_err(|e| format!("Content validation failed: {e}"))?;
 
     // Step 3: Process tags
@@ -180,23 +188,9 @@ pub async fn publish_content(
         default_authors
     };
 
-    println!(
-        "Authors: {}",
-        document_authors
-            .iter()
-            .map(|s| s.as_str())
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
+    let post_id_num = post_id.map(|id| id.parse::<i64>()).transpose()?;
+    let reply_to_num = reply_to.map(|id| id.parse::<i64>()).transpose()?;
 
-    // Create document pod with content hash, timestamp, tags, and optional post_id
-
-    let params = PodNetProverSetup::get_params();
-    let mut document_builder = SignedPodBuilder::new(&params);
-
-    document_builder.insert("request_type", "publish");
-    document_builder.insert("content_hash", content_hash);
-    document_builder.insert("timestamp", chrono::Utc::now().timestamp());
     let tag_set = Set::new(
         5, // TODO: put this configuration somewhere global
         document_tags
@@ -204,9 +198,7 @@ pub async fn publish_content(
             .map(|v| Value::from(v.clone()))
             .collect(),
     )?;
-    document_builder.insert("tags", tag_set);
 
-    // Add authors to the document pod
     let authors_set = Set::new(
         5,
         document_authors
@@ -214,53 +206,48 @@ pub async fn publish_content(
             .map(|author| Value::from(author.as_str()))
             .collect(),
     )?;
-    document_builder.insert("authors", authors_set);
 
-    // Add post_id to the pod if provided (for adding revision to existing post)
-    if let Some(id) = post_id {
-        let post_id_num = id.parse::<i64>()?;
-        document_builder.insert("post_id", post_id_num);
-    } else {
-        document_builder.insert("post_id", -1);
-    }
+    let data_dict = Dictionary::new(
+        6,
+        HashMap::from([
+            (Key::from("authors"), Value::from(authors_set)),
+            (Key::from("content_hash"), Value::from(content_hash)),
+            (Key::from("tags"), Value::from(tag_set)),
+            (Key::from("post_id"), Value::from(post_id_num.unwrap_or(-1))),
+            (
+                Key::from("reply_to"),
+                Value::from(reply_to_num.unwrap_or(-1)),
+            ),
+        ]),
+    )?;
 
-    // Add reply_to if provided
-    if let Some(id) = reply_to {
-        let reply_to_num = id.parse::<i64>()?;
-        document_builder.insert("reply_to", reply_to_num);
-    } else {
-        document_builder.insert("reply_to", -1);
-    }
+    // Create document pod
+    let params = PodNetProverSetup::get_params();
+    let document_pod = signed_pod!(&params, secret_key, {
+        "request_type" => "publish",
+        "data" => data_dict.clone(),
+    });
+    println!("✓ Document pods signed successfully");
 
-    let document_pod = document_builder.sign(&mut Signer(secret_key))?;
-    println!("✓ Document pod signed successfully");
-
-    // Verify the document pod
+    // Verify the document pods
     document_pod.verify()?;
-    println!("✓ Document pod verification successful");
-
-    // Extract verification info manually
-    let verified_content_hash = document_pod
-        .get("content_hash")
-        .and_then(|v| v.as_hash())
-        .ok_or("Document pod missing content_hash")?;
-
-    // Get identity server public key from identity pod
-    let identity_server_pk = identity_pod
-        .get(KEY_SIGNER)
-        .ok_or("Identity pod missing signer")?
-        .clone();
+    println!("✓ Document pods verification successful");
 
     // Create main pod that proves both identity and document verification
     let params = PublishProofParams {
         identity_pod: &identity_pod,
         document_pod: &document_pod,
-        identity_server_public_key: identity_server_pk,
-        content_hash: &verified_content_hash,
         use_mock_proofs: use_mock,
     };
-    let main_pod = prove_publish_verification(params)
+    let main_pod = prove_publish_verification_with_solver(params)
         .map_err(|e| format!("Failed to generate publish verification MainPod: {e}"))?;
+    verify_publish_verification_with_solver(
+        &main_pod,
+        &username,
+        &data_dict,
+        identity_pod.get(KEY_SIGNER).unwrap(),
+    )
+    .map_err(|e| format!("Failed to verify publish verification MainPod: {e}"))?;
 
     println!("✓ Main pod created and verified");
 
@@ -279,23 +266,25 @@ pub async fn publish_content(
         None
     };
 
-    println!("Serializing main pod");
-    // Create the publish request with main pod
-    let payload = serde_json::json!({
-        "content": document_content,
-        "tags": document_tags,
-        "authors": document_authors,
-        "reply_to": reply_to_id,
-        "main_pod": main_pod
-    });
-    println!("Main pod is: {}", &main_pod);
+    println!("Creating publish request");
+    // Create the publish request using the proper struct
+    let publish_request = PublishRequest {
+        content: document_content,
+        tags: document_tags,
+        authors: document_authors,
+        reply_to: reply_to_id,
+        post_id: post_id_num,
+        username: username.clone(),
+        main_pod,
+    };
+    println!("Main pod is: {}", &publish_request.main_pod);
 
-    println!("Sending mainpod");
+    println!("Sending publish request");
     let client = reqwest::Client::new();
     let response = client
         .post(format!("{server_url}/publish"))
         .header("Content-Type", "application/json")
-        .json(&payload)
+        .json(&publish_request)
         .send()
         .await?;
     println!("Done! mainpod");

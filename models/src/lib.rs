@@ -3,24 +3,30 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
+use hex::ToHex;
+
 use pod2::backends::plonky2::primitives::ec::curve::Point as PublicKey;
 use pod2::frontend::{MainPod, SignedPod};
 use pod2::middleware::{Hash, KEY_SIGNER, KEY_TYPE, PodType};
 
+pub mod macros;
+/// Main pod operations and verification utilities
+pub mod mainpod;
+
 /// File attachment within a document
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentFile {
-    pub name: String,        // Original filename
-    pub content: Vec<u8>,    // File bytes (base64 encoded in JSON)
-    pub mime_type: String,   // MIME type
+    pub name: String,      // Original filename
+    pub content: Vec<u8>,  // File bytes (base64 encoded in JSON)
+    pub mime_type: String, // MIME type
 }
 
 /// Multi-content document structure supporting messages, files, and URLs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentContent {
-    pub message: Option<String>,     // Text message
-    pub file: Option<DocumentFile>,  // File attachment  
-    pub url: Option<String>,         // URL reference
+    pub message: Option<String>,    // Text message
+    pub file: Option<DocumentFile>, // File attachment
+    pub url: Option<String>,        // URL reference
 }
 
 impl DocumentContent {
@@ -29,28 +35,29 @@ impl DocumentContent {
         if self.message.is_none() && self.file.is_none() && self.url.is_none() {
             return Err("At least one of message, file, or url must be provided".to_string());
         }
-        
+
         // Validate file size (max 10MB)
         if let Some(ref file) = self.file {
             const MAX_FILE_SIZE: usize = 10 * 1024 * 1024; // 10MB
             if file.content.len() > MAX_FILE_SIZE {
-                return Err(format!("File size {} exceeds maximum allowed size of {}", file.content.len(), MAX_FILE_SIZE));
+                return Err(format!(
+                    "File size {} exceeds maximum allowed size of {}",
+                    file.content.len(),
+                    MAX_FILE_SIZE
+                ));
             }
         }
-        
+
         // Validate URL format
         if let Some(ref url) = self.url {
             if !url.starts_with("http://") && !url.starts_with("https://") {
                 return Err("URL must start with http:// or https://".to_string());
             }
         }
-        
+
         Ok(())
     }
 }
-
-/// Main pod operations and verification utilities
-pub mod mainpod;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Post {
@@ -73,6 +80,7 @@ pub struct RawDocument {
     pub tags: HashSet<String>,            // Set of tags for document organization
     pub authors: HashSet<String>,         // Set of authors for document attribution
     pub reply_to: Option<i64>,            // Document ID this document is replying to
+    pub requested_post_id: Option<i64>,   // Original post_id from request used in MainPod proof
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -120,6 +128,9 @@ pub struct DocumentMetadata {
     pub tags: HashSet<String>, // Set of tags for document organization and discovery
     pub authors: HashSet<String>, // Set of authors for document attribution
     pub reply_to: Option<i64>, // Document ID this document is replying to
+    /// Original post_id value from the publish request used in the MainPod proof
+    /// This may be -1 for new documents, while post_id is the actual assigned ID
+    pub requested_post_id: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -128,28 +139,29 @@ pub struct Document {
     pub content: DocumentContent, // Retrieved from storage
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PublishRequest {
     pub content: DocumentContent,
     pub tags: HashSet<String>,    // Set of tags for document organization
     pub authors: HashSet<String>, // Set of authors for document attribution
     pub reply_to: Option<i64>,    // Document ID this document is replying to
+    pub post_id: Option<i64>,     // Post ID (None means create new post)
+    pub username: String,         // Expected username from identity verification
     /// MainPod that cryptographically proves the user's identity and document authenticity:
     ///
-    /// Contains two inner pods:
-    /// 1. Identity pod (from identity server) proving user identity
-    /// 2. Document pod (from user) containing content hash and metadata
+    /// Uses the new solver-based approach with:
+    /// - identity_verified(username, private: identity_pod)
+    /// - publish_verified(username, data, identity_server_pk, private: identity_pod, document_pod)
     ///
     /// The MainPod proves:
     /// - Identity verification: identity pod was signed by registered identity server
     /// - Document verification: document pod was signed by user from identity pod  
     /// - Cross verification: document signer matches identity user_public_key
-    /// - Content hash verification: document pod contains correct content hash
+    /// - Data verification: document pod contains correct content hash and metadata
     ///
     /// Public data exposed by main pod:
     /// - username: String (verified username from identity pod)
-    /// - content_hash: String (verified Poseidon hash of content)
-    /// - user_public_key: Point (verified user public key)
+    /// - data: Dictionary (verified document data including content_hash, tags, authors, etc.)
     /// - identity_server_pk: Point (verified identity server public key)
     ///
     /// This enables trustless document publishing with verified authorship.
@@ -236,27 +248,27 @@ pub struct Upvote {
     pub created_at: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct UpvoteRequest {
+    pub username: String, // Expected username from identity verification
     /// MainPod that cryptographically proves the user's identity and upvote authenticity:
     ///
-    /// Contains two inner pods:
-    /// 1. Identity pod (from identity server) proving user identity
-    /// 2. Upvote pod (from user) containing upvote details and document reference
+    /// Uses the new solver-based approach with:
+    /// - identity_verified(username, private: identity_pod)
+    /// - upvote_verified(content_hash, private: upvote_pod)
+    /// - upvote_verification(username, content_hash, identity_server_pk, private: identity_pod, upvote_pod)
     ///
     /// The MainPod proves:
     /// - Identity verification: identity pod was signed by registered identity server
     /// - Upvote verification: upvote pod was signed by user from identity pod  
     /// - Cross verification: upvote signer matches identity user_public_key
     /// - Document hash verification: upvote pod contains correct document content hash
-    /// - Post ID verification: upvote pod contains correct post ID
     /// - Request type verification: upvote pod specifies "upvote" request type
     ///
     /// Public data exposed by main pod:
     /// - username: String (verified username from identity pod)
     /// - content_hash: String (verified content hash of upvoted document)
     /// - identity_server_pk: Point (verified identity server public key)
-    /// - post_id: i64 (verified post ID containing the document)
     ///
     /// This enables trustless upvoting with verified user identity.
     pub upvote_main_pod: MainPod,
@@ -265,80 +277,22 @@ pub struct UpvoteRequest {
 /// Shared predicate definitions for publish verification
 pub fn get_publish_verification_predicate() -> String {
     // TODO: is there a better strategy for many args in the predicates?
-    format!(
-        r#"
-        identity_verified(username, private: identity_pod) = AND(
-            Equal(?identity_pod["{key_type}"], {signed_pod_type})
-            Equal(?identity_pod["username"], ?username)
-        )
-
-        document_verified(content_hash, post_id, tags, authors, reply_to, private: document_pod) = AND(
-            Equal(?document_pod["{key_type}"], {signed_pod_type})
-            Equal(?document_pod["content_hash"], ?content_hash)
-            Equal(?document_pod["tags"], ?tags)
-            Equal(?document_pod["authors"], ?authors)
-            Equal(?document_pod["post_id"], ?post_id)
-            Equal(?document_pod["reply_to"], ?reply_to)
-        )
-
-        publish_verification(username, content_hash, identity_server_pk, post_id, tags, authors, reply_to, private: identity_pod, document_pod) = AND(
-            identity_verified(?username)
-            document_verified(?content_hash, ?post_id, ?tags, ?authors, ?reply_to)
-            Equal(?identity_pod["{key_signer}"], ?identity_server_pk)
-            Equal(?identity_pod["user_public_key"], ?document_pod["{key_signer}"]) 
-        )
-        "#,
-        key_type = KEY_TYPE,
-        key_signer = KEY_SIGNER,
-        signed_pod_type = PodType::Signed as usize,
-    )
-}
-
-/// Shared predicate definitions for upvote verification
-pub fn get_upvote_verification_predicate() -> String {
-    // TODO: This is the full verification predicate...
-    //       however I can't get this to successfully prove
-    //       Therefore, we use a simplified version for now.
-    //format!(
-    //    r#"
-    //    identity_verified(username, private: identity_pod) = AND(
-    //        Equal(?identity_pod["{key_type}"], {signed_pod_type})
-    //        Equal(?identity_pod["username"], ?username)
+    //
+    //    document_verified(content_hash, post_id, tags, authors, reply_to, private: document_pod) = AND(
+    //        Equal(?document_pod["{key_type}"], {signed_pod_type})
+    //        Equal(?document_pod["content_hash"], ?content_hash)
+    //        Equal(?document_pod["tags"], ?tags)
+    //        Equal(?document_pod["authors"], ?authors)
+    //        Equal(?document_pod["post_id"], ?post_id)
+    //        Equal(?document_pod["reply_to"], ?reply_to)
     //    )
 
-    //    upvote_verified(content_hash, post_id, private: upvote_pod) = AND(
-    //        Equal(?upvote_pod["{key_type}"], {signed_pod_type})
-    //        Equal(?upvote_pod["content_hash"], ?content_hash)
-    //        Equal(?upvote_pod["post_id"], ?post_id)
-    //        Equal(?upvote_pod["request_type"], "upvote")
-    //    )
-
-    //    upvote_verification(username, content_hash, identity_server_pk, post_id, private: identity_pod, upvote_pod) = AND(
+    //    publish_verification(username, content_hash, identity_server_pk, post_id, tags, authors, reply_to, private: identity_pod, document_pod) = AND(
     //        identity_verified(?username)
-    //        upvote_verified(?content_hash, ?post_id)
+    //        document_verified(?content_hash, ?post_id, ?tags, ?authors, ?reply_to)
     //        Equal(?identity_pod["{key_signer}"], ?identity_server_pk)
-    //        Equal(?identity_pod["user_public_key"], ?upvote_pod["{key_signer}"])
+    //        Equal(?identity_pod["user_public_key"], ?document_pod["{key_signer}"])
     //    )
-
-    //    upvote_count_base(count, username, content_hash, identity_server_pk, post_id) = AND(
-    //        Equal(?count, 0)
-    //    )
-
-    //    upvote_count_ind(count, username, content_hash, identity_server_pk, post_id, private: intermed) = AND(
-    //        upvote_count(?intermed, ?username, ?content_hash, ?identity_server_pk, ?post_id)
-    //        SumOf(?count, ?intermed, 1)
-    //        upvote_verification(?username, ?content_hash, ?identity_server_pk, ?post_id)
-    //    )
-
-    //    upvote_count(count, username, content_hash, identity_server_pk, post_id) = OR(
-    //        upvote_count_base(?count, ?username, ?content_hash, ?identity_server_pk, ?post_id)
-    //        upvote_count_ind(?count, ?username, ?content_hash, ?identity_server_pk, ?post_id)
-    //    )
-    //    "#,
-    //    key_type = KEY_TYPE,
-    //    key_signer = KEY_SIGNER,
-    //    signed_pod_type = PodType::Signed as usize,
-    //)
     format!(
         r#"
         identity_verified(username, private: identity_pod) = AND(
@@ -346,33 +300,12 @@ pub fn get_upvote_verification_predicate() -> String {
             Equal(?identity_pod["username"], ?username)
         )
 
-        upvote_verified(content_hash, private: upvote_pod) = AND(
-            Equal(?upvote_pod["{key_type}"], {signed_pod_type})
-            Equal(?upvote_pod["content_hash"], ?content_hash)
-            Equal(?upvote_pod["request_type"], "upvote")
-        )
-
-        upvote_verification(username, content_hash, identity_server_pk, private: identity_pod, upvote_pod) = AND(
+        publish_verified(username, data, identity_server_pk, private: identity_pod, document_pod) = AND(
             identity_verified(?username)
-            upvote_verified(?content_hash)
+            Equal(?document_pod["request_type"], "publish")
+            Equal(?document_pod["data"], ?data)
+            Equal(?document_pod["{key_signer}"], ?identity_pod["user_public_key"])
             Equal(?identity_pod["{key_signer}"], ?identity_server_pk)
-            Equal(?identity_pod["user_public_key"], ?upvote_pod["{key_signer}"])
-        )
-
-        upvote_count_base(count, content_hash, private: data_pod) = AND(
-            Equal(?count, 0)
-            Equal(?data_pod["content_hash"], ?content_hash)
-        )
-
-        upvote_count_ind(count, content_hash, private: intermed, username, identity_server_pk) = AND(
-            upvote_count(?intermed, ?content_hash)
-            SumOf(?count, ?intermed, 1)
-            upvote_verification(?username, ?content_hash, ?identity_server_pk)
-        )
-
-        upvote_count(count, content_hash) = OR(
-            upvote_count_base(?count, ?content_hash)
-            upvote_count_ind(?count, ?content_hash)
         )
         "#,
         key_type = KEY_TYPE,
@@ -381,8 +314,8 @@ pub fn get_upvote_verification_predicate() -> String {
     )
 }
 
-/// Shared predicate definitions for upvote count verification  
-pub fn get_upvote_count_predicate() -> String {
+/// Shared predicate definitions for upvote verification only
+pub fn get_upvote_verification_predicate() -> String {
     format!(
         r#"
         identity_verified(username, private: identity_pod) = AND(
@@ -402,6 +335,18 @@ pub fn get_upvote_count_predicate() -> String {
             Equal(?identity_pod["{key_signer}"], ?identity_server_pk)
             Equal(?identity_pod["user_public_key"], ?upvote_pod["{key_signer}"])
         )
+        "#,
+        key_type = KEY_TYPE,
+        key_signer = KEY_SIGNER,
+        signed_pod_type = PodType::Signed as usize,
+    )
+}
+
+/// Shared predicate definitions for upvote count verification only
+pub fn get_upvote_count_predicate(upvote_batch_id: Hash) -> String {
+    format!(
+        r#"
+        use _, _, upvote_verification from 0x{id}
 
         upvote_count_base(count, content_hash, private: data_pod) = AND(
             Equal(?count, 0)
@@ -419,8 +364,6 @@ pub fn get_upvote_count_predicate() -> String {
             upvote_count_ind(?count, ?content_hash)
         )
         "#,
-        key_type = KEY_TYPE,
-        key_signer = KEY_SIGNER,
-        signed_pod_type = PodType::Signed as usize,
+        id = upvote_batch_id.encode_hex::<String>(),
     )
 }

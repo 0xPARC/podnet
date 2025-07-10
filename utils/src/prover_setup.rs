@@ -32,11 +32,12 @@ impl PodNetProverSetup {
     /// Get default parameters for POD operations
     pub fn get_params() -> Params {
         Params {
-            max_custom_batch_size: 10,
-            max_statement_args: 12,
-            max_custom_predicate_arity: 10,
-            max_signed_pod_values: 9,
-            max_operation_args: 10,
+            //max_custom_batch_size: 6,
+            //max_statement_args: 10,
+            //max_custom_predicate_arity: 10,
+            //max_signed_pod_values: 8,
+            //max_operation_args: 10,
+            //max_statements: 21,
             ..Params::default()
         }
     }

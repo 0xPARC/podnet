@@ -5,7 +5,7 @@
 
 pub mod publish;
 pub mod upvote;
-pub mod upvote_count;
+//pub mod upvote_count;
 
 use pod_utils::ValueExt;
 use pod2::frontend::{MainPod, SignedPod};

@@ -9,8 +9,11 @@ use pod2::backends::plonky2::{
     signedpod::Signer,
 };
 use pod2::frontend::{MainPod, SignedPodBuilder};
-use pod2::middleware::Hash;
-use podnet_models::{UpvoteRequest, get_upvote_verification_predicate};
+use pod2::middleware::{Hash, Value};
+use podnet_models::{
+    UpvoteRequest, get_upvote_verification_predicate,
+    mainpod::upvote::{verify_upvote_verification_with_solver, prove_upvote_count_base_with_solver, UpvoteCountBaseParams, prove_upvote_count_inductive_with_solver, UpvoteCountInductiveParams},
+};
 use std::sync::Arc;
 
 use crate::pod::get_server_secret_key;
@@ -33,53 +36,8 @@ pub async fn upvote_document(
     })?;
     log::info!("✓ Upvote main pod proof verified");
 
-    // Extract public data using the macro
-    log::info!("Extracting public data from upvote main pod");
-    let (uploader_username, content_hash, identity_server_pk) = podnet_models::extract_mainpod_args!(
-        &payload.upvote_main_pod,
-        get_upvote_verification_predicate(),
-        "upvote_verification",
-        username: as_str,
-        content_hash: as_hash,
-        identity_server_pk: as_public_key
-    ).map_err(|e| {
-        log::error!("Failed to extract upvote verification arguments: {e}");
-        StatusCode::BAD_REQUEST
-    })?;
-    let uploader_username = uploader_username.to_string();
-
-    log::info!(
-        "✓ Extracted public data: uploader_username={uploader_username}, content_hash={content_hash}",
-    );
-
-    // Verify the identity server public key is registered in our database
-    log::info!("Verifying identity server is registered");
-
-    // Convert identity server public key to JSON for database lookup
-    let identity_server_pk_json = serde_json::to_string(&identity_server_pk).map_err(|e| {
-        log::error!("Failed to serialize identity server public key: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
-    // Find the identity server by public key
-    let identity_server = state
-        .db
-        .get_identity_server_by_public_key(&identity_server_pk_json)
-        .map_err(|e| {
-            log::error!("Database error retrieving identity server: {e}");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?
-        .ok_or_else(|| {
-            log::error!("Identity server with public key not registered");
-            StatusCode::UNAUTHORIZED
-        })?;
-
-    log::info!(
-        "✓ Identity server {} verified as registered",
-        identity_server.server_id
-    );
-
-    // Get the actual document to verify content hash and post ID
+    // Get the document first to get its content hash for verification
+    log::info!("Getting document for content hash verification");
     let document = state
         .db
         .get_document_metadata(document_id)
@@ -92,21 +50,70 @@ pub async fn upvote_document(
             StatusCode::NOT_FOUND
         })?;
 
-    // Verify the content hash matches the actual document's content hash
-    if document.content_id != content_hash {
-        log::error!(
-            "Content hash mismatch: document={} vs upvote={}",
-            document.content_id,
-            content_hash
-        );
+    // We need to verify with all registered identity servers, since we don't know which one was used
+    log::info!("Getting all registered identity servers for verification");
+    let identity_servers = state
+        .db
+        .get_all_identity_servers()
+        .map_err(|e| {
+            log::error!("Database error retrieving identity servers: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    if identity_servers.is_empty() {
+        log::error!("No identity servers registered");
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    // Try verification with each registered identity server until one succeeds
+    let mut verification_succeeded = false;
+
+    for identity_server in &identity_servers {
+        // Parse the identity server public key from database
+        let server_pk: pod2::backends::plonky2::primitives::ec::curve::Point = 
+            serde_json::from_str(&identity_server.public_key).map_err(|e| {
+                log::error!("Failed to parse identity server public key: {e}");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+
+        let server_pk_value = Value::from(server_pk);
+
+        // Try verification with this identity server using username from request
+        log::info!("Trying upvote verification with identity server: {}", identity_server.server_id);
+        match verify_upvote_verification_with_solver(
+            &payload.upvote_main_pod,
+            &payload.username,
+            &document.content_id,
+            &server_pk_value,
+        ) {
+            Ok(_) => {
+                log::info!("✓ Solver verification succeeded with identity server: {}", identity_server.server_id);
+                verification_succeeded = true;
+                break;
+            }
+            Err(_) => {
+                log::debug!("Verification failed with identity server: {}", identity_server.server_id);
+                continue;
+            }
+        }
+    }
+
+    if !verification_succeeded {
+        log::error!("Solver-based verification failed with all registered identity servers");
         return Err(StatusCode::BAD_REQUEST);
     }
-    log::info!("✓ Content hash verified");
+
+    log::info!(
+        "✓ Solver verification passed: username={}, content_hash={}",
+        payload.username, document.content_id
+    );
+
+    // Content hash verification was already done during solver verification
 
     // Check if user has already upvoted this document (by username)
     let already_upvoted = state
         .db
-        .user_has_upvoted(document_id, &uploader_username)
+        .user_has_upvoted(document_id, &payload.username)
         .map_err(|e| {
             log::error!("Database error checking existing upvote: {e}");
             StatusCode::INTERNAL_SERVER_ERROR
@@ -114,7 +121,8 @@ pub async fn upvote_document(
 
     if already_upvoted {
         log::warn!(
-            "User {uploader_username} has already upvoted document {document_id}"
+            "User {} has already upvoted document {document_id}",
+            payload.username
         );
         return Err(StatusCode::CONFLICT);
     }
@@ -127,7 +135,7 @@ pub async fn upvote_document(
 
     let upvote_id = state
         .db
-        .create_upvote(document_id, &uploader_username, &upvote_main_pod_json)
+        .create_upvote(document_id, &payload.username, &upvote_main_pod_json)
         .map_err(|e| {
             log::error!("Failed to store upvote: {e}");
             StatusCode::INTERNAL_SERVER_ERROR
@@ -146,7 +154,7 @@ pub async fn upvote_document(
     // Spawn background task to generate inductive upvote count pod
     let state_clone = state.clone();
     let doc_id = document_id;
-    let hash = content_hash;
+    let hash = document.content_id;
     let current_count = upvote_count;
 
     tokio::spawn(async move {
@@ -178,69 +186,25 @@ pub async fn generate_base_case_upvote_pod(
     document_id: i64,
     content_hash: &Hash,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use pod2::frontend::MainPodBuilder;
-    use pod2::op;
-
     tracing::info!(
-        "Generating base case upvote count pod for document {}",
+        "Generating base case upvote count pod for document {} using solver",
         document_id
     );
 
-    let server_sk = get_server_secret_key();
+    // Use the solver-based approach for base case upvote count proof
+    let params = UpvoteCountBaseParams {
+        content_hash,
+        use_mock_proofs: state.pod_config.is_mock(),
+    };
 
-    // Get predicate batch and parameters (similar to existing code)
-    let predicate_str = podnet_models::get_upvote_verification_predicate();
-    let params = state.pod_config.get_params();
-    let batch = pod2::lang::parse(&predicate_str, &params, &[])
-        .map_err(|e| format!("Failed to parse predicate: {e}"))?;
+    let main_pod = prove_upvote_count_base_with_solver(params)
+        .map_err(|e| format!("Failed to generate base case upvote count pod: {e}"))?;
 
-    let (vd_set, prover) = state
-        .pod_config
-        .get_prover_setup()
-        .map_err(|e| format!("Failed to get prover setup: {e:?}"))?;
+    main_pod.pod.verify()
+        .map_err(|e| format!("Failed to verify base case upvote count pod: {e}"))?;
 
-    // create signed pod with public data
-    let mut data_builder = SignedPodBuilder::new(&params);
-    data_builder.insert("content_hash", *content_hash);
-    let mut server_signer = Signer(SecretKey(server_sk.0.clone()));
-    let data_pod = data_builder.sign(&mut server_signer)?;
-
-    let upvote_count_base = batch
-        .custom_batch
-        .predicate_ref_by_name("upvote_count_base")
-        .ok_or("upvote_count_base predicate not found")?;
-    let upvote_count = batch
-        .custom_batch
-        .predicate_ref_by_name("upvote_count")
-        .ok_or("upvote_count predicate not found")?;
-
-    // Build base case main pod (count = 0)
-    log::info!("Building base case upvote count pod (count=0)...");
-    let mut base_builder = MainPodBuilder::new(&params, vd_set);
-    base_builder.add_signed_pod(&data_pod);
-
-    // Create the base case: Equal(count, 0)
-    let equals_zero_stmt = base_builder.priv_op(op!(eq, 0, 0))?;
-    let content_hash_stmt =
-        base_builder.priv_op(op!(eq, (&data_pod, "content_hash"), *content_hash))?;
-    let upvote_count_base_stmt = base_builder.priv_op(op!(
-        custom,
-        upvote_count_base.clone(),
-        equals_zero_stmt,
-        content_hash_stmt
-    ))?;
-    let _count_stmt = base_builder.pub_op(op!(
-        custom,
-        upvote_count.clone(),
-        upvote_count_base_stmt.clone(),
-        upvote_count_base_stmt
-    ))?;
-
-    // Generate the proof
-    let main_pod = base_builder.prove(&*prover, &params)?;
-    main_pod.pod.verify()?;
     log::info!(
-        "✓ Successfully proved upvote_count(0) for document {document_id}"
+        "✓ Successfully proved upvote_count(0) for document {document_id} using solver"
     );
 
     // Store the pod in the database
@@ -266,11 +230,8 @@ async fn generate_inductive_upvote_pod(
     current_count: i64,
     upvote_verification_pod: &MainPod,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use pod2::frontend::MainPodBuilder;
-    use pod2::op;
-
     log::info!(
-        "Generating inductive upvote count pod for document {document_id} (count={current_count})"
+        "Generating inductive upvote count pod for document {document_id} (count={current_count}) using solver"
     );
 
     // Get the previous upvote count pod from database (for recursive proof)
@@ -301,76 +262,23 @@ async fn generate_inductive_upvote_pod(
         }
     };
 
-    // Get predicate batch and parameters
-    let predicate_str = podnet_models::get_upvote_verification_predicate();
-    let params = state.pod_config.get_params();
-    let batch = pod2::lang::parse(&predicate_str, &params, &[])
-        .map_err(|e| format!("Failed to parse predicate: {e}"))?;
-
-    let (vd_set, prover) = state
-        .pod_config
-        .get_prover_setup()
-        .map_err(|e| format!("Failed to get prover setup: {e:?}"))?;
-
-    let upvote_count_ind = batch
-        .custom_batch
-        .predicate_ref_by_name("upvote_count_ind")
-        .ok_or("upvote_count_ind predicate not found")?;
-    let upvote_count = batch
-        .custom_batch
-        .predicate_ref_by_name("upvote_count")
-        .ok_or("upvote_count predicate not found")?;
-
-    // Build inductive case main pod (count = previous_count + 1)
-    log::info!(
-        "Building inductive upvote count pod (count={current_count})..."
-    );
-    let mut ind_builder = MainPodBuilder::new(&params, vd_set);
-
-    // Add the previous pod as a recursive dependency
-    ind_builder.add_recursive_pod(previous_pod.clone());
-    ind_builder.add_recursive_pod(upvote_verification_pod.clone());
-
-    // Create SumOf operation: current_count = previous_count + 1
-    let previous_count = current_count - 1;
-    let sum_of_stmt = ind_builder.priv_op(op!(sum_of, current_count, previous_count, 1))?;
-
-    // Get the recursive statement from the previous pod (should be the public upvote_count statement)
-    let recursive_statement = if !previous_pod.public_statements.is_empty() {
-        previous_pod.public_statements.last().unwrap()
-    } else {
-        return Err("Previous pod has no public statements".into());
+    // Use the solver-based approach for inductive case upvote count proof
+    let params = UpvoteCountInductiveParams {
+        content_hash,
+        previous_count: current_count - 1,
+        previous_count_pod: &previous_pod,
+        upvote_verification_pod,
+        use_mock_proofs: state.pod_config.is_mock(),
     };
 
-    // Get the upvote verification predicate from the previous pod
-    let upvote_verification_stmt = if !upvote_verification_pod.public_statements.is_empty() {
-        upvote_verification_pod.public_statements.last().unwrap()
-    } else {
-        return Err("Upvote verification pod has no public statements".into());
-    };
+    let main_pod = prove_upvote_count_inductive_with_solver(params)
+        .map_err(|e| format!("Failed to generate inductive upvote count pod: {e}"))?;
 
-    // Create the inductive case statement
-    let ind_count_stmt = ind_builder.priv_op(op!(
-        custom,
-        upvote_count_ind.clone(),
-        recursive_statement,
-        sum_of_stmt,
-        upvote_verification_stmt
-    ))?;
+    main_pod.pod.verify()
+        .map_err(|e| format!("Failed to verify inductive upvote count pod: {e}"))?;
 
-    // Create the public upvote_count statement
-    let _count_stmt = ind_builder.pub_op(op!(
-        custom,
-        upvote_count.clone(),
-        ind_count_stmt.clone(),
-        ind_count_stmt
-    ))?;
-
-    // Generate the proof
-    let main_pod = ind_builder.prove(&*prover, &params)?;
-    main_pod.pod.verify()?;
     log::info!(
-        "✓ Successfully proved upvote_count({current_count}) for document {document_id}"
+        "✓ Successfully proved upvote_count({current_count}) for document {document_id} using solver"
     );
 
     // Store the pod in the database

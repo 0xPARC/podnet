@@ -5,21 +5,32 @@ use super::{
     extract_user_public_key, extract_username, verify_mainpod_basics,
 };
 use crate::get_publish_verification_predicate;
+use hex::ToHex;
 use pod_utils::ValueExt;
 use pod_utils::prover_setup::PodNetProverSetup;
+use pod2::backends::plonky2::mock::mainpod::MockProver;
+use pod2::backends::plonky2::primitives::ec::curve::Point;
 use pod2::frontend::{MainPod, MainPodBuilder, SignedPod};
 use pod2::lang::parse;
+use pod2::middleware::Params;
+use pod2::middleware::containers::Dictionary;
 use pod2::middleware::{Hash, KEY_SIGNER, KEY_TYPE, PodType, Value, containers::Set};
 use pod2::op;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+
+// Import the main_pod macro
+use crate::main_pod;
+
+// Import solver dependencies
+use pod2_solver::{
+    db::IndexablePod, metrics::MetricsLevel, proof::Proof, solve, value_to_podlang_literal,
+};
 
 /// Parameters for publish verification proof generation
 pub struct PublishProofParams<'a> {
     pub identity_pod: &'a SignedPod,
     pub document_pod: &'a SignedPod,
-    pub identity_server_public_key: Value,
-    pub content_hash: &'a Hash,
     pub use_mock_proofs: bool,
 }
 
@@ -31,261 +42,261 @@ pub struct PublishProofParams<'a> {
 /// - Cross-verification between identity and document signers
 /// - Content hash verification
 pub fn prove_publish_verification(params: PublishProofParams) -> MainPodResult<MainPod> {
+    //    // Extract required values from pods
+    //    let username = extract_username(params.identity_pod)?;
+    //
+    //    // Extract values from document pods
+    //    let post_id = params
+    //        .document1_pod
+    //        .get("post_id")
+    //        .ok_or(MainPodError::MissingField {
+    //            pod_type: "Document1",
+    //            field: "post_id",
+    //        })?
+    //        .clone();
+    //    let tags = params
+    //        .document1_pod
+    //        .get("tags")
+    //        .ok_or(MainPodError::MissingField {
+    //            pod_type: "Document1",
+    //            field: "tags",
+    //        })?
+    //        .clone();
+    //    let authors = params
+    //        .document2_pod
+    //        .get("authors")
+    //        .ok_or(MainPodError::MissingField {
+    //            pod_type: "Document2",
+    //            field: "authors",
+    //        })?
+    //        .clone();
+    //    let reply_to = params
+    //        .document2_pod
+    //        .get("reply_to")
+    //        .ok_or(MainPodError::MissingField {
+    //            pod_type: "Document2",
+    //            field: "reply_to",
+    //        })?
+    //        .clone();
+    //    let uploader = params
+    //        .document2_pod
+    //        .get("uploader_id")
+    //        .ok_or(MainPodError::MissingField {
+    //            pod_type: "Document2",
+    //            field: "uploader_id",
+    //        })?
+    //        .clone();
+    //
+    //    // Step 1: Create individual proofs using the unified macro syntax
+    //    let identity_main_pod = main_pod!(
+    //        params.use_mock_proofs,
+    //        get_publish_verification_predicate,
+    //        using [params.identity_pod], {
+    //            identity_verified(params.identity_pod, username) => {
+    //                eq((params.identity_pod, KEY_TYPE), PodType::Signed),
+    //                eq((params.identity_pod, "username"), username),
+    //            }
+    //        }
+    //    )?;
+    //
+    //    let document1_main_pod = main_pod!(
+    //        params.use_mock_proofs,
+    //        get_publish_verification_predicate,
+    //        using [params.document1_pod], {
+    //            document_verified1(params.document1_pod, params.content_hash, post_id, tags) => {
+    //                eq((params.document1_pod, "request_type"), "publish"),
+    //                eq((params.document1_pod, "content_hash"), *params.content_hash),
+    //                eq((params.document1_pod, "post_id"), post_id.clone()),
+    //                eq((params.document1_pod, "tags"), tags.clone()),
+    //            }
+    //        }
+    //    )?;
+    //
+    //    let document2_main_pod = main_pod!(
+    //        params.use_mock_proofs,
+    //        get_publish_verification_predicate,
+    //        using [params.document2_pod], {
+    //            document_verified2(params.document2_pod, authors, reply_to, uploader) => {
+    //                eq((params.document2_pod, "authors"), authors.clone()),
+    //                eq((params.document2_pod, "reply_to"), reply_to.clone()),
+    //                eq((params.document2_pod, "uploader_id"), uploader.clone()),
+    //            }
+    //        }
+    //    )?;
+    //
+    //    // Step 2: Get the public statements before the pods are moved
+    //    let identity_statement = identity_main_pod.pod.pub_statements()[1].clone();
+    //    let document1_statement = document1_main_pod.pod.pub_statements()[1].clone();
+    //    let document2_statement = document2_main_pod.pod.pub_statements()[1].clone();
+    //
+    //    // Create intermediate pod to work around max recursive pod number...
+    //    let intermediate_pod = main_pod!(
+    //        params.use_mock_proofs,
+    //        get_publish_verification_predicate,
+    //        using [params.identity_pod, params.document1_pod, params.document2_pod]
+    //        with recursive [identity_main_pod.clone(), document1_main_pod.clone()], {
+    //            identity_verified(params.identity_pod, username) => (identity_statement.clone()),
+    //            document_verified1(params.document1_pod, params.content_hash, post_id, tags) => (document1_statement.clone()),
+    //        }
+    //    )?;
+    //
+    //    // Step 3: Create final proof using recursive statements
+    //    let final_main_pod = main_pod!(
+    //        params.use_mock_proofs,
+    //        get_publish_verification_predicate,
+    //        using [params.identity_pod, params.document1_pod, params.document2_pod]
+    //        with recursive [intermediate_pod, document2_main_pod], {
+    //            identity_verified(params.identity_pod, username) => identity_statement,
+    //            document_verified1(params.document1_pod, params.content_hash, post_id, tags) => document1_statement,
+    //            document_verified2(params.document2_pod, authors, reply_to, uploader) => document2_statement,
+    //        }
+    //    )?;
+    //
+    //    Ok(final_main_pod)
+    unimplemented!();
+}
+
+/// Generate a publish verification MainPod using the pod2 solver
+///
+/// This creates a MainPod that cryptographically proves the same properties as
+/// prove_publish_verification but uses the automated solver approach instead
+/// of manual proof construction.
+pub fn prove_publish_verification_with_solver(
+    params: PublishProofParams,
+) -> MainPodResult<MainPod> {
+    // Extract required values from pods
+    let username = params
+        .identity_pod
+        .get("username")
+        .ok_or(MainPodError::MissingField {
+            pod_type: "Identity",
+            field: "username",
+        })?;
+    let identity_server_pk =
+        params
+            .identity_pod
+            .get(KEY_SIGNER)
+            .ok_or(MainPodError::MissingField {
+                pod_type: "Identity",
+                field: "identity_server_pk",
+            })?;
+    let data = params
+        .document_pod
+        .get("data")
+        .ok_or(MainPodError::MissingField {
+            pod_type: "Document",
+            field: "data",
+        })?
+        .clone();
+
+    // Start with the existing predicate definitions and append REQUEST
+    let mut query = get_publish_verification_predicate();
+
+    // Format the expected values for the query using value_to_podlang_literal
+    let username_literal = value_to_podlang_literal(Value::from(username.clone()));
+    let data_literal = value_to_podlang_literal(Value::from(data.clone()));
+    let identity_server_pk_literal =
+        value_to_podlang_literal(Value::from(identity_server_pk.clone()));
+
+    query.push_str(&format!(
+        r#"
+
+        REQUEST(
+            publish_verified({username_literal}, {data_literal}, {identity_server_pk_literal})
+        )
+        "#
+    ));
+    println!("QUERY: {}", query);
+
+    // Parse the complete query
+    let pod_params = Params::default();
+    let request = parse(&query, &pod_params, &[])
+        .map_err(|e| MainPodError::ProofGeneration(format!("Parse error: {:?}", e)))?
+        .request_templates;
+
+    // Provide all three pods as facts
+    let pods = [
+        IndexablePod::signed_pod(params.identity_pod),
+        IndexablePod::signed_pod(params.document_pod),
+    ];
+
+    // Let the solver find the proof
+    let (proof, _metrics) = solve(&request, &pods, MetricsLevel::Counters)
+        .map_err(|e| MainPodError::ProofGeneration(format!("Solver error: {:?}", e)))?;
+
     let pod_params = PodNetProverSetup::get_params();
     let (vd_set, prover) = PodNetProverSetup::create_prover_setup(params.use_mock_proofs)
         .map_err(MainPodError::ProofGeneration)?;
 
-    // TODO: this needs to be refactored...
-    // Extract required values from pods
-    let username = extract_username(params.identity_pod)?;
-    let user_public_key = extract_user_public_key(params.identity_pod)?;
-    let post_id = extract_post_id(params.document_pod, "Document")?;
-    let tags = extract_tags(params.document_pod, "Document")?;
-    let authors = extract_authors(params.document_pod, "Authors")?;
-    let reply_to = extract_reply_to(params.document_pod, "Reply to").unwrap_or(Value::from(-1));
+    let mut builder = MainPodBuilder::new(&pod_params, vd_set);
 
-    // Parse predicates
-    let predicate_input = get_publish_verification_predicate();
-    let batch = parse(&predicate_input, &pod_params, &[])
-        .map_err(|e| MainPodError::ProofGeneration(format!("Predicate parsing failed: {e}")))?
-        .custom_batch;
+    let (pod_ids, ops) = proof.to_inputs();
 
-    let identity_verified_pred = batch
-        .predicate_ref_by_name("identity_verified")
-        .ok_or_else(|| {
-            MainPodError::ProofGeneration("Missing identity_verified predicate".to_string())
-        })?;
-    let document_verified_pred = batch
-        .predicate_ref_by_name("document_verified")
-        .ok_or_else(|| {
-            MainPodError::ProofGeneration("Missing document_verified predicate".to_string())
-        })?;
-    let publish_verification_pred = batch
-        .predicate_ref_by_name("publish_verification")
-        .ok_or_else(|| {
-            MainPodError::ProofGeneration("Missing publish_verification predicate".to_string())
-        })?;
+    for (op, public) in ops {
+        if public {
+            builder
+                .pub_op(op)
+                .map_err(|e| MainPodError::ProofGeneration(format!("Builder error: {:?}", e)))?;
+        } else {
+            builder
+                .priv_op(op)
+                .map_err(|e| MainPodError::ProofGeneration(format!("Builder error: {:?}", e)))?;
+        }
+    }
 
-    // Step 1: Build identity verification main pod
-    let mut identity_builder = MainPodBuilder::new(&pod_params, vd_set);
-    identity_builder.add_signed_pod(params.identity_pod);
+    // Add all the pods that were referenced in the proof
+    for pod_id in pod_ids {
+        if params.identity_pod.id() == pod_id {
+            builder.add_signed_pod(params.identity_pod);
+        } else if params.document_pod.id() == pod_id {
+            builder.add_signed_pod(params.document_pod);
+        }
+    }
 
-    let identity_type_check = identity_builder
-        .priv_op(op!(eq, (params.identity_pod, KEY_TYPE), PodType::Signed))
-        .map_err(|e| MainPodError::ProofGeneration(format!("Identity type check failed: {e}")))?;
-    let _identity_signer_check = identity_builder
-        .priv_op(op!(
-            eq,
-            (params.identity_pod, KEY_SIGNER),
-            params.identity_server_public_key.clone()
-        ))
-        .map_err(|e| MainPodError::ProofGeneration(format!("Identity signer check failed: {e}")))?;
-    let identity_username_check = identity_builder
-        .priv_op(op!(eq, (params.identity_pod, "username"), username))
-        .map_err(|e| {
-            MainPodError::ProofGeneration(format!("Identity username check failed: {e}"))
-        })?;
-
-    let identity_verification = identity_builder
-        .pub_op(op!(
-            custom,
-            identity_verified_pred,
-            identity_type_check,
-            identity_username_check
-        ))
-        .map_err(|e| {
-            MainPodError::ProofGeneration(format!("Identity verification statement failed: {e}"))
-        })?;
-
-    let identity_main_pod = identity_builder
-        .prove(prover.as_ref(), &pod_params)
-        .map_err(|e| {
-            MainPodError::ProofGeneration(format!("Identity proof generation failed: {e}"))
-        })?;
-
-    identity_main_pod.pod.verify().map_err(|e| {
-        MainPodError::ProofGeneration(format!("Identity proof verification failed: {e}"))
-    })?;
-
-    // Step 2: Build document verification main pod
-    let mut document_builder = MainPodBuilder::new(&pod_params, vd_set);
-    document_builder.add_signed_pod(params.document_pod);
-
-    let document_type_check = document_builder
-        .priv_op(op!(eq, (params.document_pod, KEY_TYPE), PodType::Signed))
-        .map_err(|e| MainPodError::ProofGeneration(format!("Document type check failed: {e}")))?;
-    let _document_signer_check = document_builder
-        .priv_op(op!(eq, (params.document_pod, KEY_SIGNER), user_public_key))
-        .map_err(|e| MainPodError::ProofGeneration(format!("Document signer check failed: {e}")))?;
-    let document_content_check = document_builder
-        .priv_op(op!(
-            eq,
-            (params.document_pod, "content_hash"),
-            *params.content_hash
-        ))
-        .map_err(|e| {
-            MainPodError::ProofGeneration(format!("Document content check failed: {e}"))
-        })?;
-    let document_tags_check = document_builder
-        .priv_op(op!(eq, (params.document_pod, "tags"), tags))
-        .map_err(|e| MainPodError::ProofGeneration(format!("Document tags check failed: {e}")))?;
-    let document_authors_check = document_builder
-        .priv_op(op!(eq, (params.document_pod, "authors"), authors))
-        .map_err(|e| {
-            MainPodError::ProofGeneration(format!("Document authors check failed: {e}"))
-        })?;
-    let document_post_id_check = document_builder
-        .priv_op(op!(eq, (params.document_pod, "post_id"), post_id))
-        .map_err(|e| {
-            MainPodError::ProofGeneration(format!("Document post ID check failed: {e}"))
-        })?;
-    let document_reply_to_check = document_builder
-        .priv_op(op!(eq, (params.document_pod, "reply_to"), reply_to))
-        .map_err(|e| {
-            MainPodError::ProofGeneration(format!("Document reply_to check failed: {e}"))
-        })?;
-
-    let document_verification = document_builder
-        .pub_op(op!(
-            custom,
-            document_verified_pred,
-            document_type_check,
-            document_content_check,
-            document_tags_check,
-            document_authors_check,
-            document_post_id_check,
-            document_reply_to_check
-        ))
-        .map_err(|e| {
-            MainPodError::ProofGeneration(format!("Document verification statement failed: {e}"))
-        })?;
-
-    let document_main_pod = document_builder
-        .prove(prover.as_ref(), &pod_params)
-        .map_err(|e| {
-            MainPodError::ProofGeneration(format!("Document proof generation failed: {e}"))
-        })?;
-
-    document_main_pod.pod.verify().map_err(|e| {
-        MainPodError::ProofGeneration(format!("Document proof verification failed: {e}"))
-    })?;
-
-    // Step 3: Build final publish verification main pod
-    let mut final_builder = MainPodBuilder::new(&pod_params, vd_set);
-    final_builder.add_recursive_pod(identity_main_pod);
-    final_builder.add_recursive_pod(document_main_pod);
-    final_builder.add_signed_pod(params.identity_pod);
-    final_builder.add_signed_pod(params.document_pod);
-
-    let identity_server_pk_check = final_builder
-        .priv_op(op!(
-            eq,
-            (params.identity_pod, KEY_SIGNER),
-            params.identity_server_public_key.clone()
-        ))
-        .map_err(|e| {
-            MainPodError::ProofGeneration(format!("Final identity server check failed: {e}"))
-        })?;
-
-    let user_pk_check = final_builder
-        .priv_op(op!(
-            eq,
-            (params.identity_pod, "user_public_key"),
-            (params.document_pod, KEY_SIGNER)
-        ))
-        .map_err(|e| MainPodError::ProofGeneration(format!("Final user key check failed: {e}")))?;
-
-    let _publish_verification = final_builder
-        .pub_op(op!(
-            custom,
-            publish_verification_pred,
-            identity_verification,
-            document_verification,
-            identity_server_pk_check,
-            user_pk_check
-        ))
-        .map_err(|e| {
-            MainPodError::ProofGeneration(format!(
-                "Final publish verification statement failed: {e}"
-            ))
-        })?;
-
-    let main_pod = final_builder
-        .prove(prover.as_ref(), &pod_params)
-        .map_err(|e| {
-            MainPodError::ProofGeneration(format!("Final proof generation failed: {e}"))
-        })?;
-
-    main_pod.pod.verify().map_err(|e| {
-        MainPodError::ProofGeneration(format!("Final proof verification failed: {e}"))
-    })?;
+    let main_pod = builder
+        .prove(&*prover, &pod_params)
+        .map_err(|e| MainPodError::ProofGeneration(format!("Prove error: {:?}", e)))?;
 
     Ok(main_pod)
 }
 
-/// Verify a publish verification MainPod
-///
-/// This verifies that the MainPod contains the expected public statements
-/// and that the content hash and username match the expected values.
-pub fn verify_publish_verification(
+pub fn verify_publish_verification_with_solver(
     main_pod: &MainPod,
-    expected_content_hash: &Hash,
     expected_username: &str,
-    expected_post_id: i64,
-    expected_tags: &HashSet<String>,
+    expected_data: &Dictionary,
+    expected_identity_server_pk: &Value,
 ) -> MainPodResult<()> {
-    // Verify basic MainPod structure
-    verify_mainpod_basics(main_pod)?;
+    // Start with the existing predicate definitions and append REQUEST
+    let mut query = get_publish_verification_predicate();
 
-    // Extract all arguments in one macro call
-    let (username, content_hash, _identity_server_pk, post_id, tags) = crate::extract_mainpod_args!(
-        main_pod,
-        get_publish_verification_predicate(),
-        "publish_verification",
-        username: as_str,
-        content_hash: as_hash,
-        identity_server_pk: as_public_key,
-        post_id: as_i64,
-        tags: as_set
-    )?;
+    // Format the expected values for the query using value_to_podlang_literal
+    let username_literal = value_to_podlang_literal(Value::from(expected_username.clone()));
+    let data_literal = value_to_podlang_literal(Value::from(expected_data.clone()));
+    let identity_server_pk_literal = value_to_podlang_literal(expected_identity_server_pk.clone());
 
-    // Verify extracted data matches expected values
-    if username != expected_username {
-        return Err(MainPodError::InvalidValue {
-            field: "username",
-            expected: expected_username.to_string(),
-        });
-    }
+    query.push_str(&format!(
+        r#"
 
-    if content_hash != *expected_content_hash {
-        return Err(MainPodError::InvalidValue {
-            field: "content_hash",
-            expected: "matching content hash".to_string(),
-        });
-    }
+        REQUEST(
+            publish_verified({username_literal}, {data_literal}, {identity_server_pk_literal})
+        )
+        "#
+    ));
+    println!("QUERY: {}", query);
 
-    // Always allow -1, since it signifies that the post should be newly created.
-    if post_id != -1 && post_id != expected_post_id {
-        return Err(MainPodError::InvalidValue {
-            field: "post_id",
-            expected: expected_post_id.to_string(),
-        });
-    }
+    // Parse the complete query
+    let pod_params = Params::default();
+    let request = parse(&query, &pod_params, &[])
+        .map_err(|e| MainPodError::ProofGeneration(format!("Parse error: {:?}", e)))?
+        .request_templates;
 
-    let expected_tags_set = Set::new(
-        5,
-        expected_tags
-            .iter()
-            .map(|v| Value::from(v.clone()))
-            .collect(),
-    )
-    .map_err(|_| MainPodError::InvalidSet { field: "tags" })?;
-    if *tags != expected_tags_set {
-        return Err(MainPodError::InvalidValue {
-            field: "tags",
-            expected: format!("{expected_tags:?}"),
-        });
-    }
+    // Provide all three pods as facts
+    let pods = [IndexablePod::main_pod(main_pod)];
+
+    // Let the solver find the proof
+    let (proof, _metrics) = solve(&request, &pods, MetricsLevel::Counters)
+        .map_err(|e| MainPodError::ProofGeneration(format!("Solver error: {:?}", e)))?;
+    println!("GOT PROOF: {}", proof);
 
     Ok(())
 }

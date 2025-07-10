@@ -6,13 +6,13 @@ mod verification;
 
 use clap::{Arg, Command};
 use hex::ToHex;
-use podnet_models::{mainpod::publish::verify_publish_verification, mainpod::upvote_count::verify_upvote_count, DocumentContent};
+use podnet_models::DocumentContent;
 use pulldown_cmark::{Event, Options, Parser, html};
 
 use cli::*;
 use commands::{keygen, identity, documents, posts, publish, upvote};
 use utils::*;
-use verification::*;
+use verification::{verify_timestamp_pod_signature, verify_upvote_count, verify_publish_verification};
 
 
 fn render_to_html(
@@ -538,7 +538,9 @@ async fn view_post_in_browser(
 
         // Verify signatures (required)
         println!("Verifying signatures for revision {revision}...");
-        verify_publish_verification(&document.metadata.pod, &content_id, &uploader_username, post_id.parse()?, &tags)
+        // Use the original requested post_id for verification, not the assigned post_id
+        let verification_post_id = document.metadata.requested_post_id.or_else(|| Some(post_id.parse().ok()?));
+        verify_publish_verification(&document.metadata.pod, &content_id, &uploader_username, verification_post_id, &tags, &authors)
             .map_err(|e| format!("MainPod verification failed: {e}"))?;
         println!("Main pod: {}", document.metadata.pod);
         println!("✓ Main pod verification completed");

@@ -7,7 +7,10 @@ use pod2::backends::plonky2::primitives::ec::schnorr::SecretKey;
 use pod2::backends::plonky2::signedpod::Signer;
 use pod2::frontend::{SignedPod, SignedPodBuilder};
 use pod2::middleware::{Hash, KEY_SIGNER};
-use podnet_models::mainpod::upvote::{prove_upvote_verification, UpvoteProofParams};
+use podnet_models::{
+    mainpod::upvote::{prove_upvote_verification_with_solver, UpvoteProofParamsSolver},
+    UpvoteRequest,
+};
 use reqwest::StatusCode;
 use std::fs::File;
 
@@ -107,35 +110,28 @@ pub async fn upvote_document(
 
     println!("Username: {username}");
 
-    // Get identity server public key from identity pod
-    let identity_server_pk = identity_pod
-        .get(KEY_SIGNER)
-        .ok_or("Identity pod missing signer")?
-        .clone();
-
-    // Create main pod that proves both identity and upvote verification
-    let params = UpvoteProofParams {
+    // Create main pod that proves both identity and upvote verification using solver
+    let params = UpvoteProofParamsSolver {
         identity_pod: &identity_pod,
         upvote_pod: &upvote_pod,
-        identity_server_public_key: identity_server_pk,
-        content_hash: &content_hash,
         use_mock_proofs: use_mock,
     };
-    let main_pod = prove_upvote_verification(params)
+    let main_pod = prove_upvote_verification_with_solver(params)
         .map_err(|e| format!("Failed to generate upvote verification MainPod: {e}"))?;
 
     println!("✓ Upvote main pod created and verified");
 
-    // Create the upvote request with main pod
-    let payload = serde_json::json!({
-        "upvote_main_pod": main_pod
-    });
+    // Create the upvote request using the proper struct
+    let upvote_request = UpvoteRequest {
+        username: username.clone(),
+        upvote_main_pod: main_pod,
+    };
 
     println!("Submitting upvote to server...");
     let response = client
         .post(format!("{server_url}/documents/{doc_id}/upvote"))
         .header("Content-Type", "application/json")
-        .json(&payload)
+        .json(&upvote_request)
         .send()
         .await?;
 

@@ -10,7 +10,9 @@ resolver = "2"
 # Only dependencies shared across multiple workspace members
 [workspace.dependencies]
 # Core project dependencies (used by all/most crates)
-pod2 = { git = "https://github.com/0xPARC/pod2.git" }
+pod2 = { git = "https://github.com/0xPARC/pod2", branch = "playground-tweaks", features = [
+  "examples",
+] }
 # pod2 = { path = "../pod2" }
 plonky2 = { git = "https://github.com/0xPolygonZero/plonky2.git" }
 pod-utils = { path = "utils" }

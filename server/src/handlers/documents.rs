@@ -4,9 +4,15 @@ use axum::{
     response::Json,
 };
 use pod_utils::ValueExt;
-use podnet_models::{
-    Document, DocumentMetadata, PublishRequest, get_publish_verification_predicate,
+use pod2::middleware::{
+    Key, Value,
+    containers::{Dictionary, Set},
 };
+use podnet_models::{
+    Document, DocumentMetadata, PublishRequest,
+    mainpod::publish::verify_publish_verification_with_solver,
+};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 pub async fn get_documents(
@@ -64,56 +70,7 @@ pub async fn publish_document(
     })?;
     log::info!("✓ Main pod proof verified");
 
-    // Extract public data using the macro
-    log::info!("Extracting public data from main pod");
-    let (uploader_username, content_hash, identity_server_pk, post_id, _tags) =
-        podnet_models::extract_mainpod_args!(
-            &payload.main_pod,
-            get_publish_verification_predicate(),
-            "publish_verification",
-            username: as_str,
-            content_hash: as_hash,
-            identity_server_pk: as_public_key,
-            post_id: as_i64,
-            tags: as_set
-        )
-        .map_err(|e| {
-            log::error!("Failed to extract publish verification arguments: {e}");
-            StatusCode::BAD_REQUEST
-        })?;
-
-    log::info!(
-        "✓ Extracted public data: uploader_username={uploader_username}, content_hash={content_hash}, post_id={post_id}"
-    );
-
-    // Verify the identity server public key is registered in our database
-    log::info!("Verifying identity server is registered");
-
-    // Convert identity server public key to JSON for database lookup
-    let identity_server_pk_json = serde_json::to_string(&identity_server_pk).map_err(|e| {
-        log::error!("Failed to serialize identity server public key: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
-    // Find the identity server by public key
-    let identity_server = state
-        .db
-        .get_identity_server_by_public_key(&identity_server_pk_json)
-        .map_err(|e| {
-            log::error!("Database error retrieving identity server: {e}");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?
-        .ok_or_else(|| {
-            log::error!("Identity server with public key not registered");
-            StatusCode::UNAUTHORIZED
-        })?;
-
-    log::info!(
-        "✓ Identity server {} verified as registered",
-        identity_server.server_id
-    );
-
-    // Store the content and get its hash
+    // Store the content first to get its hash for verification
     log::info!("Storing content in content-addressed storage");
     let stored_content_hash = state
         .storage
@@ -124,14 +81,138 @@ pub async fn publish_document(
         })?;
     log::info!("Content stored successfully with hash: {stored_content_hash}");
 
-    // Verify content hash matches what's in the main pod
-    if stored_content_hash != content_hash {
-        log::error!(
-            "Content hash mismatch: stored={stored_content_hash} vs main_pod={content_hash}"
+    // Create the expected data structure for verification using request data
+    log::info!("Creating expected data structure for solver verification");
+    let mut data_map = HashMap::new();
+    data_map.insert(Key::from("content_hash"), Value::from(stored_content_hash));
+
+    // Convert tags HashSet to Set
+    let tags_set = Set::new(
+        5,
+        payload
+            .tags
+            .iter()
+            .map(|tag| Value::from(tag.clone()))
+            .collect(),
+    )
+    .map_err(|e| {
+        log::error!("Failed to create tags set: {:?}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    data_map.insert(Key::from("tags"), Value::from(tags_set));
+
+    // Convert authors HashSet to Set
+    let authors_set = Set::new(
+        5,
+        payload
+            .authors
+            .iter()
+            .map(|author| Value::from(author.clone()))
+            .collect(),
+    )
+    .map_err(|e| {
+        log::error!("Failed to create authors set: {:?}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    data_map.insert(Key::from("authors"), Value::from(authors_set));
+
+    data_map.insert(
+        Key::from("reply_to"),
+        match payload.reply_to {
+            Some(id) => Value::from(id),
+            None => Value::from(-1i64), // Use -1 for None to match original logic
+        },
+    );
+
+    // Add post_id to data dictionary
+    data_map.insert(
+        Key::from("post_id"),
+        match payload.post_id {
+            Some(id) => Value::from(id),
+            None => Value::from(-1i64), // Use -1 for None to match original logic
+        },
+    );
+
+    // Create expected data dictionary
+    let expected_data = Dictionary::new(6, data_map).map_err(|e| {
+        log::error!("Failed to create expected data dictionary: {:?}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    // We need to first verify with all registered identity servers, since we don't know which one was used
+    log::info!("Getting all registered identity servers for verification");
+    let identity_servers = state.db.get_all_identity_servers().map_err(|e| {
+        log::error!("Database error retrieving identity servers: {e}");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    if identity_servers.is_empty() {
+        log::error!("No identity servers registered");
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    // Try verification with each registered identity server until one succeeds
+    let mut verification_succeeded = false;
+    let mut identity_server_pk = None;
+
+    for identity_server in &identity_servers {
+        // Parse the identity server public key from database
+        let server_pk: pod2::backends::plonky2::primitives::ec::curve::Point =
+            serde_json::from_str(&identity_server.public_key).map_err(|e| {
+                log::error!("Failed to parse identity server public key: {e}");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+
+        let server_pk_value = Value::from(server_pk);
+
+        // Try verification with this identity server
+        log::info!(
+            "Trying verification with identity server: {}",
+            identity_server.server_id
         );
+        match verify_publish_verification_with_solver(
+            &payload.main_pod,
+            &payload.username,
+            &expected_data,
+            &server_pk_value,
+        ) {
+            Ok(_) => {
+                log::info!(
+                    "✓ Solver verification succeeded with identity server: {}",
+                    identity_server.server_id
+                );
+                verification_succeeded = true;
+                identity_server_pk = Some(server_pk);
+                break;
+            }
+            Err(_) => {
+                log::debug!(
+                    "Verification failed with identity server: {}",
+                    identity_server.server_id
+                );
+                continue;
+            }
+        }
+    }
+
+    if !verification_succeeded {
+        log::error!("Solver-based verification failed with all registered identity servers");
         return Err(StatusCode::BAD_REQUEST);
     }
-    log::info!("✓ Content hash verified");
+
+    let identity_server_pk = identity_server_pk.unwrap();
+
+    log::info!(
+        "✓ Solver verification passed: username={}, content_hash={stored_content_hash}",
+        payload.username
+    );
+
+    // Use the data from the request for further processing
+    let uploader_username = &payload.username;
+    let post_id = payload.post_id.unwrap_or(-1);
+    let content_hash = stored_content_hash;
+
+    // Identity server verification was already done above during solver verification
 
     // Determine post_id: either create new post or use existing
     log::info!("Determining post ID");
@@ -191,6 +272,7 @@ pub async fn publish_document(
             &payload.tags,
             &payload.authors,
             payload.reply_to,
+            Some(post_id), // Store original requested post_id for verification
             &state.storage,
         )
         .map_err(|e| {
