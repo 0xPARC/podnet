@@ -540,22 +540,22 @@ async fn view_post_in_browser(
         println!("Verifying signatures for revision {revision}...");
         // Use the original requested post_id for verification, not the assigned post_id
         let verification_post_id = document.metadata.requested_post_id.or_else(|| Some(post_id.parse().ok()?));
-        verify_publish_verification(&document.metadata.pod, &content_id, &uploader_username, verification_post_id, &tags, &authors)
+        verify_publish_verification(document.metadata.pod.get()?, &content_id, &uploader_username, verification_post_id, &tags, &authors)
             .map_err(|e| format!("MainPod verification failed: {e}"))?;
-        println!("Main pod: {}", document.metadata.pod);
+        println!("Main pod: {}", document.metadata.pod.json());
         println!("✓ Main pod verification completed");
 
         // Verify timestamp pod signature (required)
         println!("Verifying timestamp pod signature...");
-        println!("Timestamp pod: {}", document.metadata.timestamp_pod);
+        println!("Timestamp pod: {}", document.metadata.timestamp_pod.json());
         
         // Convert SignedPod to JSON value for verification function
-        let timestamp_pod_json = serde_json::to_value(&document.metadata.timestamp_pod)
+        let timestamp_pod_json = serde_json::to_value(document.metadata.timestamp_pod.get()?)
             .map_err(|e| format!("Failed to serialize timestamp pod: {e}"))?;
         verify_timestamp_pod_signature(&timestamp_pod_json, &server_public_key)?;
 
         // Verify upvote count pod if present (optional)
-        if let Some(upvote_count_pod) = &document.metadata.upvote_count_pod {
+        if let Some(upvote_count_pod) = document.metadata.upvote_count_pod.get()? {
             println!("Verifying upvote count pod...");
             verify_upvote_count(upvote_count_pod, upvote_count, &content_id)
                 .map_err(|e| format!("Upvote count MainPod verification failed: {e}"))?;

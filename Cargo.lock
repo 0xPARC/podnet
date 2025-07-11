@@ -1816,6 +1816,7 @@ dependencies = [
  "pod2",
  "pod2_solver",
  "serde",
+ "serde_json",
  "tokio",
 ]
 

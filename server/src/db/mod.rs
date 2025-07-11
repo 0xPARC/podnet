@@ -2,6 +2,7 @@ use hex::{FromHex, ToHex};
 use pod2::frontend::{MainPod, SignedPod};
 use pod2::middleware::Hash;
 use podnet_models::{Document, DocumentMetadata, IdentityServer, Post, RawDocument, Upvote};
+use podnet_models::lazy_pod::LazyDeser;
 use rusqlite::{Connection, OptionalExtension, Result};
 use std::collections::HashSet;
 use std::sync::Mutex;
@@ -251,11 +252,29 @@ impl Database {
             post_id,
             revision: next_revision,
             created_at: None, // Will be filled by database
-            pod: pod.clone(),
-            timestamp_pod,
+            pod: LazyDeser::from_value(pod.clone()).map_err(|_| {
+                rusqlite::Error::InvalidColumnType(
+                    0,
+                    "pod".to_string(),
+                    rusqlite::types::Type::Text,
+                )
+            })?,
+            timestamp_pod: LazyDeser::from_value(timestamp_pod).map_err(|_| {
+                rusqlite::Error::InvalidColumnType(
+                    0,
+                    "timestamp_pod".to_string(),
+                    rusqlite::types::Type::Text,
+                )
+            })?,
             uploader_id: uploader_id.to_string(),
             upvote_count,
-            upvote_count_pod: None, // Will be set by background task
+            upvote_count_pod: LazyDeser::from_value(None::<MainPod>).map_err(|_| {
+                rusqlite::Error::InvalidColumnType(
+                    0,
+                    "upvote_count_pod".to_string(),
+                    rusqlite::types::Type::Text,
+                )
+            })?, // Will be set by background task
             tags: tags.clone(),
             authors: authors.clone(),
             reply_to,
@@ -528,33 +547,14 @@ impl Database {
 
     // Helper method to convert RawDocument to DocumentMetadata
     pub fn raw_document_to_metadata(&self, raw_doc: RawDocument) -> Result<DocumentMetadata> {
-        let pod: MainPod = serde_json::from_str(&raw_doc.pod).map_err(|_| {
-            rusqlite::Error::InvalidColumnType(0, "pod".to_string(), rusqlite::types::Type::Text)
-        })?;
-
-        let timestamp_pod: SignedPod =
-            serde_json::from_str(&raw_doc.timestamp_pod).map_err(|_| {
-                rusqlite::Error::InvalidColumnType(
-                    0,
-                    "timestamp_pod".to_string(),
-                    rusqlite::types::Type::Text,
-                )
-            })?;
-
-        // Parse upvote count pod if it exists
-        let upvote_count_pod = match raw_doc.upvote_count_pod {
-            Some(pod_json) => {
-                let pod: MainPod = serde_json::from_str(&pod_json).map_err(|_| {
-                    rusqlite::Error::InvalidColumnType(
-                        0,
-                        "upvote_count_pod".to_string(),
-                        rusqlite::types::Type::Text,
-                    )
-                })?;
-                Some(pod)
-            }
-            None => None,
-        };
+        // Create lazy pod wrappers instead of deserializing immediately
+        let pod = LazyDeser::new(raw_doc.pod);
+        let timestamp_pod = LazyDeser::new(raw_doc.timestamp_pod);
+        
+        // For optional MainPod, we need to create the JSON for Option<MainPod>
+        let upvote_count_pod_json = serde_json::to_string(&raw_doc.upvote_count_pod)
+            .map_err(|_| rusqlite::Error::InvalidColumnType(0, "upvote_count_pod".to_string(), rusqlite::types::Type::Text))?;
+        let upvote_count_pod = LazyDeser::new(upvote_count_pod_json);
 
         // Get upvote count
         let upvote_count = raw_doc

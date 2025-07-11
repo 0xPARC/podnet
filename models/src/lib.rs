@@ -7,11 +7,14 @@ use hex::ToHex;
 
 use pod2::backends::plonky2::primitives::ec::curve::Point as PublicKey;
 use pod2::frontend::{MainPod, SignedPod};
+use lazy_pod::LazyDeser;
 use pod2::middleware::{Hash, KEY_SIGNER, KEY_TYPE, PodType};
 
 pub mod macros;
 /// Main pod operations and verification utilities
 pub mod mainpod;
+/// Lazy deserialization wrappers for pods
+pub mod lazy_pod;
 
 /// File attachment within a document
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,7 +112,7 @@ pub struct DocumentMetadata {
     /// - content_hash: String (verified Poseidon hash of content)
     /// - user_public_key: Point (verified user public key)
     /// - identity_server_pk: Point (verified identity server public key)
-    pub pod: MainPod,
+    pub pod: LazyDeser<MainPod>,
     /// SignedPod containing server timestamp information:
     /// - post_id: i64 (ID of the post this document belongs to)
     /// - document_id: i64 (ID of this document revision)
@@ -118,13 +121,13 @@ pub struct DocumentMetadata {
     ///
     /// This pod proves the document was timestamped by the server and establishes
     /// the canonical ordering of document creation.
-    pub timestamp_pod: SignedPod,
+    pub timestamp_pod: LazyDeser<SignedPod>,
     pub uploader_id: String, // Username of the uploader
     pub upvote_count: i64,   // Number of upvotes for this document
     /// MainPod that cryptographically proves the upvote count is correct
     /// Proves: upvote_count(N, content_hash, post_id) where N is the actual count
     /// Uses recursive proofs starting from base case (count=0) and building up
-    pub upvote_count_pod: Option<MainPod>,
+    pub upvote_count_pod: LazyDeser<Option<MainPod>>,
     pub tags: HashSet<String>, // Set of tags for document organization and discovery
     pub authors: HashSet<String>, // Set of authors for document attribution
     pub reply_to: Option<i64>, // Document ID this document is replying to
