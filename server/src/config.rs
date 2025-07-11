@@ -8,6 +8,10 @@ pub struct ServerConfig {
     pub port: u16,
     /// Host to bind the server to
     pub host: String,
+    /// Path to the database file
+    pub database_path: String,
+    /// Path to the content storage directory
+    pub content_storage_path: String,
 }
 
 impl Default for ServerConfig {
@@ -16,6 +20,8 @@ impl Default for ServerConfig {
             mock_proofs: true, // Default to mock proofs for development
             port: 3000,
             host: "0.0.0.0".to_string(), // Bind to all interfaces for deployment
+            database_path: "app.db".to_string(),
+            content_storage_path: "content".to_string(),
         }
     }
 }
@@ -35,10 +41,18 @@ impl ServerConfig {
         let host = env::var("PODNET_HOST")
             .unwrap_or_else(|_| "0.0.0.0".to_string());
         
+        let database_path = env::var("PODNET_DATABASE_PATH")
+            .unwrap_or_else(|_| "app.db".to_string());
+        
+        let content_storage_path = env::var("PODNET_CONTENT_STORAGE_PATH")
+            .unwrap_or_else(|_| "content".to_string());
+        
         Self {
             mock_proofs,
             port,
             host,
+            database_path,
+            content_storage_path,
         }
     }
 
@@ -49,6 +63,8 @@ impl ServerConfig {
         tracing::info!("  Mock proofs: {}", config.mock_proofs);
         tracing::info!("  Host: {}", config.host);
         tracing::info!("  Port: {}", config.port);
+        tracing::info!("  Database path: {}", config.database_path);
+        tracing::info!("  Content storage path: {}", config.content_storage_path);
         config
     }
 }

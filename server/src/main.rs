@@ -39,11 +39,11 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Configuration loaded: mock_proofs = {}", config.mock_proofs);
 
     tracing::info!("Initializing database...");
-    let db = Arc::new(db::Database::new("app.db").await?);
+    let db = Arc::new(db::Database::new(&config.database_path).await?);
     tracing::info!("Database initialized successfully");
 
     tracing::info!("Initializing content storage...");
-    let storage = Arc::new(storage::ContentAddressedStorage::new("content")?);
+    let storage = Arc::new(storage::ContentAddressedStorage::new(&config.content_storage_path)?);
     tracing::info!("Content storage initialized successfully");
 
     let pod_config = pod::PodConfig::new(config.mock_proofs);
