@@ -5,16 +5,16 @@ use std::collections::HashSet;
 
 use hex::ToHex;
 
+use lazy_pod::LazyDeser;
 use pod2::backends::plonky2::primitives::ec::curve::Point as PublicKey;
 use pod2::frontend::{MainPod, SignedPod};
-use lazy_pod::LazyDeser;
-use pod2::middleware::{Hash, KEY_SIGNER, KEY_TYPE, PodType};
+use pod2::middleware::{Hash, KEY_SIGNER, KEY_TYPE, Key, PodType, Value};
 
+/// Lazy deserialization wrappers for pods
+pub mod lazy_pod;
 pub mod macros;
 /// Main pod operations and verification utilities
 pub mod mainpod;
-/// Lazy deserialization wrappers for pods
-pub mod lazy_pod;
 
 /// File attachment within a document
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -140,6 +140,161 @@ pub struct DocumentMetadata {
 pub struct Document {
     pub metadata: DocumentMetadata,
     pub content: DocumentContent, // Retrieved from storage
+}
+
+impl Document {
+    /// Verify all cryptographic proofs for this document
+    pub fn verify(&self, server_public_key: &str) -> Result<(), Box<dyn std::error::Error>> {
+        // Verify publish verification (MainPod)
+        self.verify_publish_verification()?;
+
+        // Verify timestamp pod signature
+        self.verify_timestamp_pod_signature(server_public_key)?;
+
+        // Verify upvote count pod if present
+        self.verify_upvote_count_pod()?;
+
+        println!("✓ All document verification checks passed");
+        Ok(())
+    }
+
+    /// Verify the publish verification MainPod
+    pub fn verify_publish_verification(&self) -> Result<(), Box<dyn std::error::Error>> {
+        use pod2::middleware::{
+            Statement,
+            containers::{Dictionary, Set},
+        };
+        use std::collections::HashMap;
+
+        println!("Verifying publish verification MainPod...");
+
+        let main_pod = self.metadata.pod.get()?;
+
+        // Extract identity server public key from MainPod
+        let publish_verified_statement = &main_pod.public_statements[1];
+        let identity_server_pk = match publish_verified_statement {
+            Statement::Custom(_, args) => &args[2],
+            _ => return Err("Invalid MainPod structure".into()),
+        };
+
+        // Build expected data dictionary
+        let mut data_map = HashMap::new();
+        data_map.insert(
+            Key::from("content_hash"),
+            Value::from(self.metadata.content_id),
+        );
+
+        // Convert tags to Set
+        let tags_set = Set::new(
+            5,
+            self.metadata
+                .tags
+                .iter()
+                .map(|tag| Value::from(tag.clone()))
+                .collect::<HashSet<_>>(),
+        )
+        .map_err(|e| format!("Failed to create tags set: {:?}", e))?;
+        data_map.insert(Key::from("tags"), Value::from(tags_set));
+
+        // Convert authors to Set
+        let authors_set = Set::new(
+            5,
+            self.metadata
+                .authors
+                .iter()
+                .map(|author| Value::from(author.clone()))
+                .collect::<HashSet<_>>(),
+        )
+        .map_err(|e| format!("Failed to create authors set: {:?}", e))?;
+        data_map.insert(Key::from("authors"), Value::from(authors_set));
+
+        // Add reply_to
+        data_map.insert(
+            Key::from("reply_to"),
+            Value::from(self.metadata.reply_to.unwrap_or(-1)),
+        );
+
+        // Add post_id (use requested_post_id if available, otherwise use post_id)
+        let verification_post_id = self
+            .metadata
+            .requested_post_id
+            .unwrap_or(self.metadata.post_id);
+        data_map.insert(Key::from("post_id"), Value::from(verification_post_id));
+
+        // Create expected data dictionary
+        let expected_data = Dictionary::new(6, data_map)
+            .map_err(|e| format!("Failed to create expected data dictionary: {:?}", e))?;
+
+        // Use solver-based verification
+        mainpod::publish::verify_publish_verification_with_solver(
+            main_pod,
+            &self.metadata.uploader_id,
+            &expected_data,
+            identity_server_pk,
+        )
+        .map_err(|e| format!("Publish verification failed: {e}"))?;
+
+        println!("✓ Publish verification successful");
+        Ok(())
+    }
+
+    /// Verify the timestamp pod signature
+    pub fn verify_timestamp_pod_signature(
+        &self,
+        server_public_key: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use pod2::frontend::SignedPod;
+
+        println!("Verifying timestamp pod signature...");
+
+        let timestamp_pod = self.metadata.timestamp_pod.get()?;
+
+        // Verify signature
+        timestamp_pod.verify()?;
+
+        // TODO: get the server public key
+        // Check that the signer matches the server public key
+        //let pod_signer = timestamp_pod
+        //    .get("_signer")
+        //    .ok_or("Timestamp pod missing signer")?;
+        //
+        //let pod_signer_str = format!("{pod_signer}");
+        //let server_public_key = format!("pk:{server_public_key}");
+        //if pod_signer_str != server_public_key {
+        //    return Err(format!(
+        //        "Timestamp pod signer {pod_signer_str} does not match server public key {server_public_key}"
+        //    ).into());
+        //}
+
+        println!("✓ Timestamp pod signature verified");
+        Ok(())
+    }
+
+    /// Verify the upvote count pod if present
+    pub fn verify_upvote_count_pod(&self) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(upvote_count_pod) = self.metadata.upvote_count_pod.get()? {
+            println!("Verifying upvote count pod...");
+
+            mainpod::upvote::verify_upvote_count_with_solver(
+                upvote_count_pod,
+                self.metadata.upvote_count,
+                &self.metadata.content_id,
+            )
+            .map_err(|e| format!("Upvote count verification failed: {e}"))?;
+
+            println!(
+                "✓ Upvote count verification successful (count: {})",
+                self.metadata.upvote_count
+            );
+        } else if self.metadata.upvote_count > 0 {
+            println!(
+                "⚠️  Warning: Document claims {} upvotes but no upvote count proof provided",
+                self.metadata.upvote_count
+            );
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

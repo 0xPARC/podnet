@@ -3,16 +3,32 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::marker::PhantomData;
 
 /// A generic lazy deserialization wrapper that deserializes JSON only when accessed
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct LazyDeser<T> {
     json: String,
-    #[serde(skip)]
     value: OnceLock<T>,
-    #[serde(skip)]
     _phantom: PhantomData<T>,
 }
 
-// Manual implementation of Deserialize to avoid requiring T: Default
+// Manual implementation of Serialize to serialize transparently as the JSON value
+impl<T> Serialize for LazyDeser<T>
+where
+    T: DeserializeOwned + Serialize,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::Error;
+        
+        // Parse the JSON string and serialize the actual value
+        let value: serde_json::Value = serde_json::from_str(&self.json)
+            .map_err(S::Error::custom)?;
+        value.serialize(serializer)
+    }
+}
+
+// Manual implementation of Deserialize to deserialize transparently from the JSON value
 impl<'de, T> Deserialize<'de> for LazyDeser<T>
 where
     T: DeserializeOwned + Serialize,
@@ -21,7 +37,11 @@ where
     where
         D: serde::Deserializer<'de>,
     {
-        let json = String::deserialize(deserializer)?;
+        use serde::de::Error;
+        
+        // Deserialize as a JSON value, then convert to string
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let json = serde_json::to_string(&value).map_err(D::Error::custom)?;
         Ok(Self::new(json))
     }
 }
@@ -48,10 +68,10 @@ where
 
     pub fn get(&self) -> Result<&T, serde_json::Error> {
         Ok(self.value.get_or_init(|| {
-            serde_json::from_str(&self.json).unwrap_or_else(|_| {
+            serde_json::from_str(&self.json).unwrap_or_else(|e| {
                 // If deserialization fails, we need to handle it gracefully
                 // For now, panic - in production you might want different error handling
-                panic!("Failed to deserialize JSON in LazyDeser")
+                panic!("Failed to deserialize JSON in LazyDeser. JSON content: '{}', Error: {}", self.json, e)
             })
         }))
     }

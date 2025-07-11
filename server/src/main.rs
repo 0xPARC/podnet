@@ -34,6 +34,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Load configuration
     let config = config::ServerConfig::load();
+    let host = config.host.clone();
+    let port = config.port;
     tracing::info!("Configuration loaded: mock_proofs = {}", config.mock_proofs);
 
     tracing::info!("Initializing database...");
@@ -81,9 +83,10 @@ async fn main() -> anyhow::Result<()> {
         .layer(CorsLayer::permissive())
         .with_state(state);
 
-    tracing::info!("Binding to 0.0.0.0:3000...");
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
-    tracing::info!("Server running on http://localhost:3000");
+    let bind_addr = format!("{}:{}", host, port);
+    tracing::info!("Binding to {}...", bind_addr);
+    let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
+    tracing::info!("Server running on http://{}:{}", host, port);
     tracing::info!("Available endpoints:");
     tracing::info!("  GET  /                       - Root endpoint");
     tracing::info!("  GET  /posts                  - List all posts");

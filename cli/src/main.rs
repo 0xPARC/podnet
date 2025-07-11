@@ -1,8 +1,8 @@
 mod cli;
 mod commands;
+mod config;
 mod conversion;
 mod utils;
-mod verification;
 
 use clap::{Arg, Command};
 use hex::ToHex;
@@ -12,7 +12,6 @@ use pulldown_cmark::{Event, Options, Parser, html};
 use cli::*;
 use commands::{keygen, identity, documents, posts, publish, upvote};
 use utils::*;
-use verification::{verify_timestamp_pod_signature, verify_upvote_count, verify_publish_verification};
 
 
 fn render_to_html(
@@ -277,7 +276,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .about("Sign content and submit to server using main pod verification (creates new post or adds revision)")
                 .args([
                     keypair_arg(), 
-                    server_arg(), 
                     optional_post_id_arg(),
                     Arg::new("identity_pod")
                         .help("Path to identity pod file")
@@ -327,43 +325,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .subcommand(
             Command::new("get-post")
                 .about("Retrieve post with all its documents")
-                .args([post_id_arg(), server_arg()]),
+                .args([post_id_arg()]),
         )
         .subcommand(
             Command::new("get-document")
                 .about("Retrieve specific document by ID")
-                .args([document_id_arg(), server_arg()]),
+                .args([document_id_arg()]),
         )
         .subcommand(
             Command::new("render")
                 .about("Retrieve and render document as HTML by ID")
-                .args([document_id_arg(), server_arg()]),
+                .args([document_id_arg()]),
         )
         .subcommand(
             Command::new("view")
                 .about("Retrieve latest document from post, render as HTML, and open in browser")
-                .args([post_id_arg(), server_arg()]),
+                .args([post_id_arg()]),
         )
         .subcommand(
             Command::new("list-posts")
                 .about("List all posts")
-                .arg(server_arg()),
         )
         .subcommand(
             Command::new("list-documents")
                 .about("List all documents metadata")
-                .arg(server_arg()),
         )
         .subcommand(
             Command::new("get-identity")
                 .about("Get identity pod from identity server")
                 .args([
                     keypair_arg(),
-                    Arg::new("identity_server")
-                        .help("Identity server URL")
-                        .short('i')
-                        .long("identity-server")
-                        .default_value("http://localhost:3001"),
                     Arg::new("username")
                         .help("Username to register")
                         .short('u')
@@ -381,7 +372,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .about("Upvote a document with cryptographic verification using main pod")
                 .args([
                     keypair_arg(),
-                    server_arg(),
                     document_id_arg(),
                     identity_pod_arg(),
                     mock_arg(),
@@ -400,7 +390,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let file_path = sub_matches.get_one::<String>("file");
             let url = sub_matches.get_one::<String>("url");
             let format_override = sub_matches.get_one::<String>("format");
-            let server = sub_matches.get_one::<String>("server").unwrap();
+            let server = config::CliConfig::load().server_url;
             let post_id = sub_matches.get_one::<String>("post_id");
             let identity_pod_file = sub_matches.get_one::<String>("identity_pod").unwrap();
             let use_mock = sub_matches.get_flag("mock");
@@ -413,40 +403,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("At least one of --message, --file, or --url must be provided".into());
             }
 
-            publish::publish_content(keypair_file, message, file_path, url, format_override, server, post_id, identity_pod_file, use_mock, tags, authors, reply_to).await?;
+            publish::publish_content(keypair_file, message, file_path, url, format_override, &server, post_id, identity_pod_file, use_mock, tags, authors, reply_to).await?;
         }
         Some(("get-post", sub_matches)) => {
             let post_id = sub_matches.get_one::<String>("post_id").unwrap();
-            let server = sub_matches.get_one::<String>("server").unwrap();
-            posts::get_post_by_id(post_id, server).await?;
+            let server = config::CliConfig::load().server_url;
+            posts::get_post_by_id(post_id, &server).await?;
         }
         Some(("view", sub_matches)) => {
             let post_id = sub_matches.get_one::<String>("post_id").unwrap();
-            let server = sub_matches.get_one::<String>("server").unwrap();
-            view_post_in_browser(post_id, server).await?;
+            let server = config::CliConfig::load().server_url;
+            view_post_in_browser(post_id, &server).await?;
         }
         Some(("list-posts", sub_matches)) => {
-            let server = sub_matches.get_one::<String>("server").unwrap();
-            posts::list_posts(server).await?;
+            let server = config::CliConfig::load().server_url;
+            posts::list_posts(&server).await?;
         }
         Some(("list-documents", sub_matches)) => {
-            let server = sub_matches.get_one::<String>("server").unwrap();
-            documents::list_documents(server).await?;
+            let server = config::CliConfig::load().server_url;
+            documents::list_documents(&server).await?;
         }
         Some(("get-identity", sub_matches)) => {
             let keypair_file = sub_matches.get_one::<String>("keypair").unwrap();
-            let identity_server = sub_matches.get_one::<String>("identity_server").unwrap();
+            let identity_server = config::CliConfig::load().identity_server_url;
             let username = sub_matches.get_one::<String>("username").unwrap();
             let output_file = sub_matches.get_one::<String>("output").unwrap();
-            identity::get_identity(keypair_file, identity_server, username, output_file).await?;
+            identity::get_identity(keypair_file, &identity_server, username, output_file).await?;
         }
         Some(("upvote", sub_matches)) => {
             let keypair_file = sub_matches.get_one::<String>("keypair").unwrap();
-            let server = sub_matches.get_one::<String>("server").unwrap();
+            let server = config::CliConfig::load().server_url;
             let document_id = sub_matches.get_one::<String>("document_id").unwrap();
             let identity_pod = sub_matches.get_one::<String>("identity_pod").unwrap();
             let use_mock = sub_matches.get_flag("mock");
-            upvote::upvote_document(keypair_file, document_id, server, identity_pod, use_mock).await?;
+            upvote::upvote_document(keypair_file, document_id, &server, identity_pod, use_mock).await?;
         }
         _ => {
             println!("No valid subcommand provided. Use --help for usage information.");
@@ -536,33 +526,11 @@ async fn view_post_in_browser(
         let tags = document.metadata.tags.clone();
         let authors = document.metadata.authors.clone();
 
-        // Verify signatures (required)
+        // Verify all cryptographic proofs using the new Document.verify() method
         println!("Verifying signatures for revision {revision}...");
-        // Use the original requested post_id for verification, not the assigned post_id
-        let verification_post_id = document.metadata.requested_post_id.or_else(|| Some(post_id.parse().ok()?));
-        verify_publish_verification(document.metadata.pod.get()?, &content_id, &uploader_username, verification_post_id, &tags, &authors)
-            .map_err(|e| format!("MainPod verification failed: {e}"))?;
+        document.verify(&server_public_key)?;
         println!("Main pod: {}", document.metadata.pod.json());
-        println!("✓ Main pod verification completed");
-
-        // Verify timestamp pod signature (required)
-        println!("Verifying timestamp pod signature...");
         println!("Timestamp pod: {}", document.metadata.timestamp_pod.json());
-        
-        // Convert SignedPod to JSON value for verification function
-        let timestamp_pod_json = serde_json::to_value(document.metadata.timestamp_pod.get()?)
-            .map_err(|e| format!("Failed to serialize timestamp pod: {e}"))?;
-        verify_timestamp_pod_signature(&timestamp_pod_json, &server_public_key)?;
-
-        // Verify upvote count pod if present (optional)
-        if let Some(upvote_count_pod) = document.metadata.upvote_count_pod.get()? {
-            println!("Verifying upvote count pod...");
-            verify_upvote_count(upvote_count_pod, upvote_count, &content_id)
-                .map_err(|e| format!("Upvote count MainPod verification failed: {e}"))?;
-            println!("✓ Upvote count MainPod verification completed (count: {upvote_count})");
-        } else if upvote_count > 0 {
-            println!("⚠️  Warning: Document claims {upvote_count} upvotes but no upvote count proof provided");
-        }
 
         // Fetch replies for this document
         println!("Fetching replies for document {doc_id}...");

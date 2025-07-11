@@ -1,13 +1,7 @@
 use clap::Arg;
 
 // Helper functions for creating common arguments
-pub fn server_arg() -> Arg {
-    Arg::new("server")
-        .help("Server URL")
-        .short('s')
-        .long("server")
-        .default_value("http://localhost:3000")
-}
+// Note: Server URL is now configured via PODNET_SERVER_URL environment variable
 
 pub fn keypair_arg() -> Arg {
     Arg::new("keypair")
