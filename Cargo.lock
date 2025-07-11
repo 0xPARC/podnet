@@ -1751,6 +1751,7 @@ dependencies = [
 [[package]]
 name = "pod2_solver"
 version = "0.1.0"
+source = "git+https://github.com/0xPARC/pod2-client?branch=value_to_literal#6ae05165de2945fd7bfcc30eed789b6e865fce16"
 dependencies = [
  "env_logger",
  "hex",

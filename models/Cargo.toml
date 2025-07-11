@@ -10,8 +10,8 @@ serde_json = "1.0"
 pod2.workspace = true
 hex.workspace = true
 pod-utils = { path = "../utils" }
-pod2_solver = { path = "../../pod2-client/solver" }
 num-bigint.workspace = true
+pod2_solver = { git = "https://github.com/0xPARC/pod2-client", branch = "value_to_literal" }
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["rt", "macros"] }
