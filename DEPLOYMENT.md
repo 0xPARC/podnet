@@ -57,13 +57,32 @@ cargo run -p podnet-cli -- list-posts
 
 ## Identity Server Configuration
 
-The identity server will also use environment variables:
-- `PORT` - Port to run on (default: 3001)
-- `PODNET_HOST` - Host to bind to (default: "0.0.0.0")
-- `PODNET_DATABASE_PATH` - Path to SQLite database file (default: "app.db")
-- `PODNET_CONTENT_STORAGE_PATH` - Path to content storage directory (default: "content")
+The identity server uses environment variables for configuration:
 
-**Note**: For production, use different database and storage paths for the identity server to avoid conflicts.
+### Core Configuration
+- `PORT` - Port to run on (default: 3001)
+- `PODNET_SERVER_URL` - Main server URL for registration (default: "http://localhost:3000")
+
+### Keypair Storage
+- `IDENTITY_KEYPAIR_FILE` - Path to keypair file (default: "identity-server-keypair.json")
+
+### Examples
+
+#### Development (Local Storage)
+```bash
+# Use defaults (local file storage)
+cargo run -p podnet-ident-strawman
+```
+
+#### Production on Render with Secret Files
+1. Create a secret file in your Render service containing the keypair JSON
+2. Set the environment variable to point to the secret file:
+```
+IDENTITY_KEYPAIR_FILE=/etc/secrets/identity-keypair.json
+PODNET_SERVER_URL=https://your-podnet-server.onrender.com
+```
+
+The identity server will automatically create and store a keypair on first startup if the file doesn't exist.
 
 ## Quick Setup for Render
 

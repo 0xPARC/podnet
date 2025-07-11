@@ -548,13 +548,16 @@ impl Database {
     // Helper method to convert RawDocument to DocumentMetadata
     pub fn raw_document_to_metadata(&self, raw_doc: RawDocument) -> Result<DocumentMetadata> {
         // Create lazy pod wrappers instead of deserializing immediately
-        let pod = LazyDeser::new(raw_doc.pod);
-        let timestamp_pod = LazyDeser::new(raw_doc.timestamp_pod);
+        let pod = LazyDeser::from_json_string(raw_doc.pod)
+            .map_err(|_| rusqlite::Error::InvalidColumnType(0, "pod".to_string(), rusqlite::types::Type::Text))?;
+        let timestamp_pod = LazyDeser::from_json_string(raw_doc.timestamp_pod)
+            .map_err(|_| rusqlite::Error::InvalidColumnType(0, "timestamp_pod".to_string(), rusqlite::types::Type::Text))?;
         
         // For optional MainPod, we need to create the JSON for Option<MainPod>
         let upvote_count_pod_json = serde_json::to_string(&raw_doc.upvote_count_pod)
             .map_err(|_| rusqlite::Error::InvalidColumnType(0, "upvote_count_pod".to_string(), rusqlite::types::Type::Text))?;
-        let upvote_count_pod = LazyDeser::new(upvote_count_pod_json);
+        let upvote_count_pod = LazyDeser::from_json_string(upvote_count_pod_json)
+            .map_err(|_| rusqlite::Error::InvalidColumnType(0, "upvote_count_pod".to_string(), rusqlite::types::Type::Text))?;
 
         // Get upvote count
         let upvote_count = raw_doc

@@ -493,6 +493,7 @@ async fn main() -> anyhow::Result<()> {
     // Load or create server keypair
     let keypair_file = std::env::var("IDENTITY_KEYPAIR_FILE")
         .unwrap_or_else(|_| "identity-server-keypair.json".to_string());
+    tracing::info!("Using keypair file: {}", keypair_file);
 
     let (server_id, server_secret_key, server_public_key) = load_or_create_keypair(&keypair_file)?;
 
