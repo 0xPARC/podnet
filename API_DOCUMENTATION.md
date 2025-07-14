@@ -493,6 +493,7 @@ CREATE TABLE documents (
     tags TEXT DEFAULT '[]',             -- JSON array of tags
     authors TEXT DEFAULT '[]',          -- JSON array of author names
     reply_to INTEGER,                   -- Foreign key to documents table (optional)
+    requested_post_id INTEGER,          -- Original post_id from request used in MainPod proof
     FOREIGN KEY (post_id) REFERENCES posts (id),
     FOREIGN KEY (reply_to) REFERENCES documents (id),
     UNIQUE (post_id, revision)
