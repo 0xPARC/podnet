@@ -75,25 +75,20 @@ Note: The ultimate source of truth on the objects each route requests is in
 
 **Note:** The `content` field must contain at least one of `message`, `file`, or `url`. All three can be provided together. The `reply_to` field is optional and references another document's ID.
 
-**MainPod Predicate:** `publish_verification(username, content_hash, identity_server_pk, post_id)`
+**MainPod Predicate:** `publish_verified(username, data, identity_server_pk)`
 
 ```
 identity_verified(username, private: identity_pod) = AND(
-    Equal(?identity_pod["_type"], 1)
+    Equal(?identity_pod["_type"], SIGNED_POD)
     Equal(?identity_pod["username"], ?username)
 )
 
-document_verified(content_hash, private: document_pod) = AND(
-    Equal(?document_pod["_type"], 1)
-    Equal(?document_pod["content_hash"], ?content_hash)
-)
-
-publish_verification(username, content_hash, identity_server_pk, post_id, private: identity_pod, document_pod) = AND(
+publish_verified(username, data, identity_server_pk, private: identity_pod, document_pod) = AND(
     identity_verified(?username)
-    document_verified(?content_hash)
+    Equal(?document_pod["request_type"], "publish")
+    Equal(?document_pod["data"], ?data)
+    Equal(?document_pod["_signer"], ?identity_pod["user_public_key"])
     Equal(?identity_pod["_signer"], ?identity_server_pk)
-    Equal(?identity_pod["user_public_key"], ?document_pod["_signer"]) 
-    Equal(?document_pod["post_id"], ?post_id)
 )
 ```
 
@@ -287,24 +282,23 @@ This ensures the main server controls challenge generation and the identity serv
 }
 ```
 
-**MainPod Predicate:** `upvote_verification(username, content_hash, identity_server_pk, post_id)`
+**MainPod Predicate:** `upvote_verification(username, content_hash, identity_server_pk)`
 
 ```
 identity_verified(username, private: identity_pod) = AND(
-    Equal(?identity_pod["_type"], 1)
+    Equal(?identity_pod["_type"], SIGNED_POD)
     Equal(?identity_pod["username"], ?username)
 )
 
-upvote_verified(content_hash, post_id, private: upvote_pod) = AND(
-    Equal(?upvote_pod["_type"], 1)
+upvote_verified(content_hash, private: upvote_pod) = AND(
+    Equal(?upvote_pod["_type"], SIGNED_POD)
     Equal(?upvote_pod["content_hash"], ?content_hash)
-    Equal(?upvote_pod["post_id"], ?post_id)
     Equal(?upvote_pod["request_type"], "upvote")
 )
 
-upvote_verification(username, content_hash, identity_server_pk, post_id, private: identity_pod, upvote_pod) = AND(
+upvote_verification(username, content_hash, identity_server_pk, private: identity_pod, upvote_pod) = AND(
     identity_verified(?username)
-    upvote_verified(?content_hash, ?post_id)
+    upvote_verified(?content_hash)
     Equal(?identity_pod["_signer"], ?identity_server_pk)
     Equal(?identity_pod["user_public_key"], ?upvote_pod["_signer"])
 )
@@ -357,21 +351,25 @@ upvote_verification(username, content_hash, identity_server_pk, post_id, private
 ]
 ```
 
-**Upvote Count Pod Predicate:** `upvote_count(count, username, content_hash, identity_server_pk, post_id)`
+**Upvote Count Pod Predicate:** `upvote_count(count, content_hash)`
 
 ```
-upvote_count_base(count, username, content_hash, identity_server_pk, post_id) = AND(
+use _, _, upvote_verification from [upvote_batch_id]
+
+upvote_count_base(count, content_hash, private: data_pod) = AND(
     Equal(?count, 0)
+    Equal(?data_pod["content_hash"], ?content_hash)
 )
 
-upvote_count_ind(count, username, content_hash, identity_server_pk, post_id, private: intermed) = AND(
-    upvote_count(?intermed, ?username, ?content_hash, ?identity_server_pk, ?post_id)
+upvote_count_ind(count, content_hash, private: intermed, username, identity_server_pk) = AND(
+    upvote_count(?intermed, ?content_hash)
     SumOf(?count, ?intermed, 1)
+    upvote_verification(?username, ?content_hash, ?identity_server_pk)
 )
 
-upvote_count(count, username, content_hash, identity_server_pk, post_id) = OR(
-    upvote_count_base(?count, ?username, ?content_hash, ?identity_server_pk, ?post_id)
-    upvote_count_ind(?count, ?username, ?content_hash, ?identity_server_pk, ?post_id)
+upvote_count(count, content_hash) = OR(
+    upvote_count_base(?count, ?content_hash)
+    upvote_count_ind(?count, ?content_hash)
 )
 ```
 
