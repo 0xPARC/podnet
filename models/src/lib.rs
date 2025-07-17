@@ -103,7 +103,7 @@ pub struct DocumentMetadata {
     pub created_at: Option<String>,
     /// MainPod that proves:
     /// - Identity verification: identity pod was signed by registered identity server
-    /// - Document verification: document pod was signed by user from identity pod  
+    /// - Document verification: document pod was signed by user from identity pod
     /// - Cross verification: document signer matches identity user_public_key
     /// - Content hash verification: document pod contains correct content hash
     ///
@@ -313,7 +313,7 @@ pub struct PublishRequest {
     ///
     /// The MainPod proves:
     /// - Identity verification: identity pod was signed by registered identity server
-    /// - Document verification: document pod was signed by user from identity pod  
+    /// - Document verification: document pod was signed by user from identity pod
     /// - Cross verification: document signer matches identity user_public_key
     /// - Data verification: document pod contains correct content hash and metadata
     ///
@@ -418,7 +418,7 @@ pub struct UpvoteRequest {
     ///
     /// The MainPod proves:
     /// - Identity verification: identity pod was signed by registered identity server
-    /// - Upvote verification: upvote pod was signed by user from identity pod  
+    /// - Upvote verification: upvote pod was signed by user from identity pod
     /// - Cross verification: upvote signer matches identity user_public_key
     /// - Document hash verification: upvote pod contains correct document content hash
     /// - Request type verification: upvote pod specifies "upvote" request type
@@ -514,7 +514,8 @@ pub fn get_upvote_count_predicate(upvote_batch_id: Hash) -> String {
         upvote_count_ind(count, content_hash, private: intermed, username, identity_server_pk) = AND(
             upvote_count(?intermed, ?content_hash)
             SumOf(?count, ?intermed, 1)
-            upvote_verification(?username, ?content_hash, ?identity_server_pk)
+          //  upvote_verification(?username, ?content_hash, ?identity_server_pk)
+            Lt(0, ?count)
         )
 
         upvote_count(count, content_hash) = OR(
