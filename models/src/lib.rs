@@ -514,7 +514,7 @@ pub fn get_upvote_count_predicate(upvote_batch_id: Hash) -> String {
         upvote_count_ind(count, content_hash, private: intermed, username, identity_server_pk) = AND(
             upvote_count(?intermed, ?content_hash)
             SumOf(?count, ?intermed, 1)
-          //  upvote_verification(?username, ?content_hash, ?identity_server_pk)
+            upvote_verification(?username, ?content_hash, ?identity_server_pk)
             Lt(0, ?count)
         )
 
