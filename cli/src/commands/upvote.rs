@@ -118,7 +118,6 @@ pub async fn upvote_document(
         .map_err(|e| format!("Failed to generate upvote verification MainPod: {e}"))?;
 
     println!("✓ Upvote main pod created and verified");
-    println!("{}", serde_json::to_string(&main_pod).unwrap());
 
     // Create the upvote request using the proper struct
     let upvote_request = UpvoteRequest {

@@ -703,12 +703,6 @@ pub fn prove_upvote_count_inductive_with_solver(
         "#
     ));
 
-    println!("Upvote count query: {}", upvote_count_query);
-    println!("{}", params.previous_count_pod);
-    println!("{}", params.upvote_verification_pod);
-    println!("{:?}", params.previous_count_pod.public_statements);
-    println!("{:?}", upvote_verification_batch.id());
-
     // Parse the complete query with the verification batch as a dependency
     let request = parse(
         &upvote_count_query,
