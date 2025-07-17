@@ -11,9 +11,7 @@ pod2.workspace = true
 hex.workspace = true
 pod-utils = { path = "../utils" }
 num-bigint.workspace = true
-pod2_solver = { path = "../../client-pod2/solver" }
-env_logger = "0.11.8"
-log.workspace = true
+pod2_solver = { git = "https://github.com/0xPARC/pod2-client" }
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["rt", "macros"] }
