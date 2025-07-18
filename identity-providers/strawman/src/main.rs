@@ -1,6 +1,6 @@
 use axum::{
     Router,
-    extract::State,
+    extract::{Query, State},
     http::StatusCode,
     response::Json,
     routing::{get, post},
@@ -13,9 +13,10 @@ use pod2::backends::plonky2::{
 use pod2::frontend::{SignedPod, SignedPodBuilder};
 use pod2::middleware::Params;
 use rand::Rng;
+use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -24,6 +25,7 @@ pub struct IdentityServerState {
     pub server_id: String,
     pub server_secret_key: Arc<SecretKey>,
     pub server_public_key: PublicKey,
+    pub db_conn: Arc<Mutex<Connection>>,
 }
 
 impl Clone for IdentityServerState {
@@ -32,6 +34,7 @@ impl Clone for IdentityServerState {
             server_id: self.server_id.clone(),
             server_secret_key: Arc::clone(&self.server_secret_key),
             server_public_key: self.server_public_key,
+            db_conn: Arc::clone(&self.db_conn),
         }
     }
 }
@@ -57,7 +60,7 @@ pub struct UserChallengeResponse {
 #[derive(Debug, Deserialize)]
 pub struct IdentityRequest {
     /// Identity request containing both identity server's challenge and user's response
-    /// 
+    ///
     /// server_challenge_pod contains:
     /// - challenge: String (original challenge from identity server)
     /// - expires_at: String (expiration timestamp)
@@ -121,6 +124,17 @@ pub struct IdentityServerKeypair {
     pub created_at: String,
 }
 
+// Username lookup models
+#[derive(Debug, Deserialize)]
+pub struct UsernameLookupRequest {
+    pub public_key: PublicKey,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UsernameLookupResponse {
+    pub username: String,
+}
+
 // Root endpoint
 async fn root(State(state): State<IdentityServerState>) -> Json<ServerInfo> {
     Json(ServerInfo {
@@ -134,7 +148,10 @@ async fn request_user_challenge(
     State(state): State<IdentityServerState>,
     Json(payload): Json<UserChallengeRequest>,
 ) -> Result<Json<UserChallengeResponse>, StatusCode> {
-    tracing::info!("User challenge requested for username: {}", payload.username);
+    tracing::info!(
+        "User challenge requested for username: {}",
+        payload.username
+    );
 
     // Generate a secure random challenge
     let challenge: String = (0..32)
@@ -156,7 +173,7 @@ async fn request_user_challenge(
     // Create challenge pod signed by identity server
     let params = Params::default();
     let mut challenge_builder = SignedPodBuilder::new(&params);
-    
+
     challenge_builder.insert("challenge", challenge.as_str());
     challenge_builder.insert("expires_at", expires_at_str.as_str());
     challenge_builder.insert("user_public_key", payload.user_public_key);
@@ -169,13 +186,13 @@ async fn request_user_challenge(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    tracing::info!("User challenge pod created and signed for: {}", payload.username);
+    tracing::info!(
+        "User challenge pod created and signed for: {}",
+        payload.username
+    );
 
-    Ok(Json(UserChallengeResponse {
-        challenge_pod,
-    }))
+    Ok(Json(UserChallengeResponse { challenge_pod }))
 }
-
 
 // Step 2: User submits both challenge pod and response, gets identity pod
 async fn issue_identity(
@@ -325,7 +342,41 @@ async fn issue_identity(
 
     tracing::info!("Identity pod issued for user: {}", username);
 
+    // Store username-public key mapping in database
+    {
+        let conn = state.db_conn.lock().unwrap();
+        if let Err(e) = insert_user_mapping(&conn, user_public_key, username) {
+            tracing::error!("Failed to store username mapping: {}", e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    }
+
     Ok(Json(IdentityResponse { identity_pod }))
+}
+
+// Username lookup handler
+async fn lookup_username_by_public_key(
+    State(state): State<IdentityServerState>,
+    Query(params): Query<UsernameLookupRequest>,
+) -> Result<Json<UsernameLookupResponse>, StatusCode> {
+    tracing::info!("Looking up username for public key: {}", params.public_key);
+
+    let conn = state.db_conn.lock().unwrap();
+
+    match get_username_by_public_key(&conn, &params.public_key) {
+        Ok(Some(username)) => {
+            tracing::info!("✓ Found username: {}", username);
+            Ok(Json(UsernameLookupResponse { username }))
+        }
+        Ok(None) => {
+            tracing::info!("Username not found for public key: {}", params.public_key);
+            Err(StatusCode::NOT_FOUND)
+        }
+        Err(e) => {
+            tracing::error!("Database error during username lookup: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
 }
 
 // Register this identity server with the podnet-server
@@ -478,12 +529,72 @@ fn load_or_create_keypair(keypair_file: &str) -> anyhow::Result<(String, SecretK
     }
 }
 
+// Database initialization function
+fn initialize_database(db_path: &str) -> anyhow::Result<Connection> {
+    tracing::info!("Initializing database at: {}", db_path);
+
+    let conn = Connection::open(db_path)?;
+
+    // Create the users table if it doesn't exist
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS users (
+            public_key_json TEXT PRIMARY KEY,
+            username TEXT NOT NULL,
+            issued_at TEXT NOT NULL
+        )",
+        [],
+    )?;
+
+    tracing::info!("✓ Database initialized successfully");
+    Ok(conn)
+}
+
+// Database operations
+fn insert_user_mapping(
+    conn: &Connection,
+    public_key: &PublicKey,
+    username: &str,
+) -> anyhow::Result<()> {
+    let public_key_json = serde_json::to_string(public_key)?;
+    let issued_at = chrono::Utc::now().to_rfc3339();
+
+    conn.execute(
+        "INSERT OR REPLACE INTO users (public_key_json, username, issued_at) VALUES (?1, ?2, ?3)",
+        params![public_key_json, username, issued_at],
+    )?;
+
+    tracing::info!(
+        "✓ Stored username mapping: {} -> {}",
+        username,
+        public_key_json
+    );
+    Ok(())
+}
+
+fn get_username_by_public_key(
+    conn: &Connection,
+    public_key: &PublicKey,
+) -> anyhow::Result<Option<String>> {
+    let public_key_json = serde_json::to_string(public_key)?;
+
+    let mut stmt = conn.prepare("SELECT username FROM users WHERE public_key_json = ?1")?;
+    let mut rows = stmt.query(params![public_key_json])?;
+
+    if let Some(row) = rows.next()? {
+        let username: String = row.get(0)?;
+        Ok(Some(username))
+    } else {
+        Ok(None)
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
         .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "podnet_ident_strawman=debug,tower_http=debug,axum::routing=trace".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                "podnet_ident_strawman=debug,tower_http=debug,axum::routing=trace".into()
+            }),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
@@ -513,16 +624,26 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("Issued identity pods may not be accepted by podnet-server.");
     }
 
+    // Initialize database
+    let db_path =
+        std::env::var("IDENTITY_DATABASE_PATH").unwrap_or_else(|_| "identity-users.db".to_string());
+    tracing::info!("Using database file: {}", db_path);
+
+    let db_conn = initialize_database(&db_path)?;
+    let db_conn = Arc::new(Mutex::new(db_conn));
+
     let state = IdentityServerState {
         server_id: server_id.clone(),
         server_secret_key: Arc::new(server_secret_key),
         server_public_key,
+        db_conn,
     };
 
     let app = Router::new()
         .route("/", get(root))
         .route("/user/challenge", post(request_user_challenge))
         .route("/identity", post(issue_identity))
+        .route("/lookup", get(lookup_username_by_public_key))
         .layer(CorsLayer::permissive())
         .with_state(state);
 
@@ -533,6 +654,9 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("  GET  /                - Server info");
     tracing::info!("  POST /user/challenge  - Request challenge for user identity");
     tracing::info!("  POST /identity        - Submit challenge response, get identity pod");
+    tracing::info!(
+        "  GET  /lookup          - Look up username by public key (query param: public_key)"
+    );
 
     axum::serve(listener, app).await?;
     Ok(())
