@@ -60,6 +60,13 @@ pub async fn publish_document(
     })?;
     log::info!("✓ Document content validated");
 
+    // Validate the title
+    if payload.title.trim().is_empty() {
+        log::error!("Document title cannot be empty");
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    log::info!("✓ Document title validated");
+
     let (_vd_set, _prover) = state.pod_config.get_prover_setup()?;
 
     // Verify main pod proof
@@ -273,6 +280,7 @@ pub async fn publish_document(
             &payload.authors,
             payload.reply_to,
             Some(post_id), // Store original requested post_id for verification
+            &payload.title,
             &state.storage,
         )
         .map_err(|e| {

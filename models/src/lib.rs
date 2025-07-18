@@ -84,6 +84,7 @@ pub struct RawDocument {
     pub authors: HashSet<String>,         // Set of authors for document attribution
     pub reply_to: Option<i64>,            // Document ID this document is replying to
     pub requested_post_id: Option<i64>,   // Original post_id from request used in MainPod proof
+    pub title: String,                    // Document title
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -134,6 +135,7 @@ pub struct DocumentMetadata {
     /// Original post_id value from the publish request used in the MainPod proof
     /// This may be -1 for new documents, while post_id is the actual assigned ID
     pub requested_post_id: Option<i64>,
+    pub title: String, // Document title
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -299,6 +301,7 @@ impl Document {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PublishRequest {
+    pub title: String,            // Document title
     pub content: DocumentContent,
     pub tags: HashSet<String>,    // Set of tags for document organization
     pub authors: HashSet<String>, // Set of authors for document attribution

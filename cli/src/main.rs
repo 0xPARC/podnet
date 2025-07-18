@@ -277,6 +277,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .args([
                     keypair_arg(), 
                     optional_post_id_arg(),
+                    Arg::new("title")
+                        .help("Document title")
+                        .long("title")
+                        .value_name("TITLE")
+                        .required(true),
                     Arg::new("identity_pod")
                         .help("Path to identity pod file")
                         .short('i')
@@ -386,6 +391,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(("publish", sub_matches)) => {
             let keypair_file = sub_matches.get_one::<String>("keypair").unwrap();
+            let title = sub_matches.get_one::<String>("title").unwrap();
             let message = sub_matches.get_one::<String>("message");
             let file_path = sub_matches.get_one::<String>("file");
             let url = sub_matches.get_one::<String>("url");
@@ -403,7 +409,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("At least one of --message, --file, or --url must be provided".into());
             }
 
-            publish::publish_content(keypair_file, message, file_path, url, format_override, &server, post_id, identity_pod_file, use_mock, tags, authors, reply_to).await?;
+            publish::publish_content(keypair_file, title, message, file_path, url, format_override, &server, post_id, identity_pod_file, use_mock, tags, authors, reply_to).await?;
         }
         Some(("get-post", sub_matches)) => {
             let post_id = sub_matches.get_one::<String>("post_id").unwrap();
