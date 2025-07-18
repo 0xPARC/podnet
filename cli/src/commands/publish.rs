@@ -21,6 +21,7 @@ use podnet_models::{DocumentContent, DocumentFile, PublishRequest};
 
 pub async fn publish_content(
     keypair_file: &str,
+    title: &str,
     message: Option<&String>,
     file_path: Option<&String>,
     url: Option<&String>,
@@ -269,6 +270,7 @@ pub async fn publish_content(
     println!("Creating publish request");
     // Create the publish request using the proper struct
     let publish_request = PublishRequest {
+        title: title.to_string(),
         content: document_content,
         tags: document_tags,
         authors: document_authors,

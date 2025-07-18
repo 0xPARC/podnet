@@ -50,6 +50,7 @@ impl Database {
                 authors TEXT DEFAULT '[]',
                 reply_to INTEGER,
                 requested_post_id INTEGER,
+                title TEXT NOT NULL,
                 FOREIGN KEY (post_id) REFERENCES posts (id),
                 FOREIGN KEY (reply_to) REFERENCES documents (id),
                 UNIQUE (post_id, revision)
@@ -61,6 +62,13 @@ impl Database {
         // This will fail silently if the column already exists
         let _ = conn.execute(
             "ALTER TABLE documents ADD COLUMN requested_post_id INTEGER",
+            [],
+        );
+
+        // Add title column to existing databases (migration)
+        // This will fail silently if the column already exists
+        let _ = conn.execute(
+            "ALTER TABLE documents ADD COLUMN title TEXT NOT NULL DEFAULT ''",
             [],
         );
 
@@ -158,6 +166,7 @@ impl Database {
         authors: &HashSet<String>,
         reply_to: Option<i64>,
         requested_post_id: Option<i64>,
+        title: &str,
         storage: &crate::storage::ContentAddressedStorage,
     ) -> Result<Document> {
         let mut conn = self.conn.lock().unwrap();
@@ -186,7 +195,7 @@ impl Database {
 
         // Insert document with empty timestamp_pod and null upvote_count_pod initially
         tx.execute(
-            "INSERT INTO documents (content_id, post_id, revision, pod, timestamp_pod, uploader_id, upvote_count_pod, tags, authors, reply_to, requested_post_id) VALUES (?1, ?2, ?3, ?4, '', ?5, NULL, ?6, ?7, ?8, ?9)",
+            "INSERT INTO documents (content_id, post_id, revision, pod, timestamp_pod, uploader_id, upvote_count_pod, tags, authors, reply_to, requested_post_id, title) VALUES (?1, ?2, ?3, ?4, '', ?5, NULL, ?6, ?7, ?8, ?9, ?10)",
             rusqlite::params![
                 content_id_string,
                 post_id,
@@ -197,6 +206,7 @@ impl Database {
                 authors_json,
                 reply_to,
                 requested_post_id,
+                title,
             ],
         )?;
 
@@ -279,6 +289,7 @@ impl Database {
             authors: authors.clone(),
             reply_to,
             requested_post_id,
+            title: title.to_string(),
         };
 
         Ok(Document { metadata, content })
@@ -287,7 +298,7 @@ impl Database {
     pub fn get_raw_document(&self, id: i64) -> Result<Option<RawDocument>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod, uploader_id, upvote_count_pod, tags, authors, reply_to, requested_post_id, requested_post_id FROM documents WHERE id = ?1"
+            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod, uploader_id, upvote_count_pod, tags, authors, reply_to, requested_post_id, title FROM documents WHERE id = ?1"
         )?;
 
         let document = stmt
@@ -310,6 +321,7 @@ impl Database {
                     authors,
                     reply_to: row.get(11)?,
                     requested_post_id: row.get(12)?,
+                    title: row.get(13)?,
                 })
             })
             .optional()?;
@@ -320,7 +332,7 @@ impl Database {
     pub fn get_documents_by_post_id(&self, post_id: i64) -> Result<Vec<RawDocument>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod, uploader_id, upvote_count_pod, tags, authors, reply_to, requested_post_id
+            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod, uploader_id, upvote_count_pod, tags, authors, reply_to, requested_post_id, title
              FROM documents WHERE post_id = ?1 ORDER BY revision DESC",
         )?;
 
@@ -344,6 +356,7 @@ impl Database {
                     authors,
                     reply_to: row.get(11)?,
                     requested_post_id: row.get(12)?,
+                    title: row.get(13)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -354,7 +367,7 @@ impl Database {
     pub fn get_latest_document_by_post_id(&self, post_id: i64) -> Result<Option<RawDocument>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod, uploader_id, upvote_count_pod, tags, authors, reply_to, requested_post_id
+            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod, uploader_id, upvote_count_pod, tags, authors, reply_to, requested_post_id, title
              FROM documents WHERE post_id = ?1 ORDER BY revision DESC LIMIT 1",
         )?;
 
@@ -378,6 +391,7 @@ impl Database {
                     authors,
                     reply_to: row.get(11)?,
                     requested_post_id: row.get(12)?,
+                    title: row.get(13)?,
                 })
             })
             .optional()?;
@@ -388,7 +402,7 @@ impl Database {
     pub fn get_all_documents(&self) -> Result<Vec<RawDocument>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod, uploader_id, upvote_count_pod, tags, authors, reply_to, requested_post_id
+            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod, uploader_id, upvote_count_pod, tags, authors, reply_to, requested_post_id, title
              FROM documents ORDER BY created_at DESC",
         )?;
 
@@ -412,6 +426,7 @@ impl Database {
                     authors,
                     reply_to: row.get(11)?,
                     requested_post_id: row.get(12)?,
+                    title: row.get(13)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -588,6 +603,7 @@ impl Database {
             authors: raw_doc.authors,
             reply_to: raw_doc.reply_to,
             requested_post_id: raw_doc.requested_post_id,
+            title: raw_doc.title,
         })
     }
 
@@ -702,7 +718,7 @@ impl Database {
     pub fn get_replies_to_document(&self, document_id: i64) -> Result<Vec<RawDocument>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod, uploader_id, upvote_count_pod, tags, authors, reply_to, requested_post_id
+            "SELECT id, content_id, post_id, revision, created_at, pod, timestamp_pod, uploader_id, upvote_count_pod, tags, authors, reply_to, requested_post_id, title
              FROM documents WHERE reply_to = ?1 ORDER BY created_at ASC",
         )?;
 
@@ -726,6 +742,7 @@ impl Database {
                     authors,
                     reply_to: row.get(11)?,
                     requested_post_id: row.get(12)?,
+                    title: row.get(13)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;

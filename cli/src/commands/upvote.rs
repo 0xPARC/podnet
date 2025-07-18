@@ -8,8 +8,8 @@ use pod2::backends::plonky2::signedpod::Signer;
 use pod2::frontend::{SignedPod, SignedPodBuilder};
 use pod2::middleware::{Hash, KEY_SIGNER};
 use podnet_models::{
-    mainpod::upvote::{prove_upvote_verification_with_solver, UpvoteProofParamsSolver},
     UpvoteRequest,
+    mainpod::upvote::{UpvoteProofParamsSolver, prove_upvote_verification_with_solver},
 };
 use reqwest::StatusCode;
 use std::fs::File;
@@ -31,9 +31,7 @@ pub async fn upvote_document(
     let doc_id: i64 = document_id.parse()?;
 
     // First, get the document to retrieve its content hash and post ID
-    println!(
-        "Retrieving document {doc_id} to get content hash and post ID..."
-    );
+    println!("Retrieving document {doc_id} to get content hash and post ID...");
     let client = reqwest::Client::new();
     let response = client
         .get(format!("{server_url}/documents/{doc_id}"))
@@ -160,4 +158,3 @@ pub async fn upvote_document(
 
     Ok(())
 }
-

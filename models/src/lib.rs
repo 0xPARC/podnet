@@ -84,6 +84,7 @@ pub struct RawDocument {
     pub authors: HashSet<String>,         // Set of authors for document attribution
     pub reply_to: Option<i64>,            // Document ID this document is replying to
     pub requested_post_id: Option<i64>,   // Original post_id from request used in MainPod proof
+    pub title: String,                    // Document title
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -103,7 +104,7 @@ pub struct DocumentMetadata {
     pub created_at: Option<String>,
     /// MainPod that proves:
     /// - Identity verification: identity pod was signed by registered identity server
-    /// - Document verification: document pod was signed by user from identity pod  
+    /// - Document verification: document pod was signed by user from identity pod
     /// - Cross verification: document signer matches identity user_public_key
     /// - Content hash verification: document pod contains correct content hash
     ///
@@ -134,6 +135,7 @@ pub struct DocumentMetadata {
     /// Original post_id value from the publish request used in the MainPod proof
     /// This may be -1 for new documents, while post_id is the actual assigned ID
     pub requested_post_id: Option<i64>,
+    pub title: String, // Document title
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -299,6 +301,7 @@ impl Document {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PublishRequest {
+    pub title: String,            // Document title
     pub content: DocumentContent,
     pub tags: HashSet<String>,    // Set of tags for document organization
     pub authors: HashSet<String>, // Set of authors for document attribution
@@ -313,7 +316,7 @@ pub struct PublishRequest {
     ///
     /// The MainPod proves:
     /// - Identity verification: identity pod was signed by registered identity server
-    /// - Document verification: document pod was signed by user from identity pod  
+    /// - Document verification: document pod was signed by user from identity pod
     /// - Cross verification: document signer matches identity user_public_key
     /// - Data verification: document pod contains correct content hash and metadata
     ///
@@ -418,7 +421,7 @@ pub struct UpvoteRequest {
     ///
     /// The MainPod proves:
     /// - Identity verification: identity pod was signed by registered identity server
-    /// - Upvote verification: upvote pod was signed by user from identity pod  
+    /// - Upvote verification: upvote pod was signed by user from identity pod
     /// - Cross verification: upvote signer matches identity user_public_key
     /// - Document hash verification: upvote pod contains correct document content hash
     /// - Request type verification: upvote pod specifies "upvote" request type
@@ -515,6 +518,7 @@ pub fn get_upvote_count_predicate(upvote_batch_id: Hash) -> String {
             upvote_count(?intermed, ?content_hash)
             SumOf(?count, ?intermed, 1)
             upvote_verification(?username, ?content_hash, ?identity_server_pk)
+            Lt(0, ?count)
         )
 
         upvote_count(count, content_hash) = OR(

@@ -1,5 +1,5 @@
-use podnet_models::get_upvote_count_predicate;
 use hex::FromHex;
+use log;
 use num_bigint::BigUint;
 use pod2::backends::plonky2::primitives::ec::schnorr::SecretKey;
 use pod2::backends::plonky2::signedpod::Signer;
@@ -7,16 +7,69 @@ use pod2::frontend::{MainPod, SignedPodBuilder};
 use pod2::lang::parse;
 use pod2::middleware::{Hash, Key, Params, Value, containers::Dictionary};
 use pod2_solver::{db::IndexablePod, metrics::MetricsLevel, solve, value_to_podlang_literal};
+use podnet_models::get_upvote_count_predicate;
+use podnet_models::mainpod::upvote::{
+    UpvoteCountBaseParams, UpvoteCountInductiveParams, prove_upvote_count_base_with_solver,
+    prove_upvote_count_inductive_with_solver,
+};
 use std::collections::HashMap;
+use std::fs;
+
+#[test]
+fn test_full_upvote_count() {
+    let _ = env_logger::builder()
+        .is_test(true)
+        .filter_level(log::LevelFilter::Trace)
+        .try_init();
+    let content_hash =
+        Hash::from_hex("eee73e344ffc120fb787c7650fd9a036362e4d2dc20a3646cc8e9f7112ec4d12").unwrap();
+    let base_params = UpvoteCountBaseParams {
+        content_hash: &content_hash,
+        use_mock_proofs: true,
+    };
+    let base_pod_result = prove_upvote_count_base_with_solver(base_params);
+    assert!(base_pod_result.is_ok());
+
+    let upvote_pod_json =
+        fs::read_to_string("tests/upvote_pod.json").expect("Unable to read upvote_pod.json");
+    let upvote_pod: MainPod = serde_json::from_str(&upvote_pod_json).unwrap();
+
+    let inductive_params = UpvoteCountInductiveParams {
+        content_hash: &content_hash,
+        previous_count: 0,
+        previous_count_pod: &base_pod_result.unwrap(),
+        upvote_verification_pod: &upvote_pod,
+        use_mock_proofs: true,
+    };
+    let inductive_pod_result = prove_upvote_count_inductive_with_solver(inductive_params);
+    assert!(inductive_pod_result.is_ok());
+    let inductive_pod = inductive_pod_result.unwrap();
+    println!("Inductive pod: {}", inductive_pod);
+
+    let inductive_params = UpvoteCountInductiveParams {
+        content_hash: &content_hash,
+        previous_count: 1,
+        previous_count_pod: &inductive_pod,
+        upvote_verification_pod: &upvote_pod,
+        use_mock_proofs: true,
+    };
+    let inductive_pod_result = prove_upvote_count_inductive_with_solver(inductive_params);
+    assert!(inductive_pod_result.is_ok());
+    let inductive_pod_two = inductive_pod_result.unwrap();
+    println!("Inductive pod two: {}", inductive_pod_two);
+}
 
 #[test]
 fn test_simple_upvote_count() {
+    let _ = env_logger::builder()
+        .is_test(true)
+        .filter_level(log::LevelFilter::Trace)
+        .try_init();
     println!("Testing simple upvote count without verification...");
 
     // Create a simple content hash for testing
     let content_hash =
-        Hash::from_hex("1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef")
-            .unwrap();
+        Hash::from_hex("1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef").unwrap();
 
     // Create a simple predicate that just does counting without verification
     let simple_predicate = r#"
@@ -24,13 +77,14 @@ fn test_simple_upvote_count() {
         Equal(?count, 0)
         Equal(?data_pod["content_hash"], ?content_hash)
     )
-    
+
     upvote_count_ind(count, content_hash, private: data_pod, intermed) = AND(
         upvote_count(?intermed, ?content_hash)
         SumOf(?count, ?intermed, 1)
         Equal(?data_pod["content_hash"], ?content_hash)
+        Lt(0, ?count)
     )
-    
+
     upvote_count(count, content_hash) = OR(
         upvote_count_base(?count, ?content_hash)
         upvote_count_ind(?count, ?content_hash)
@@ -41,14 +95,14 @@ fn test_simple_upvote_count() {
 
     // Parse the predicate
     let pod_params = Params::default();
-    let parsed_result = parse(&simple_predicate, &pod_params, &[])
-        .expect("Failed to parse upvote count predicate");
+    let parsed_result =
+        parse(&simple_predicate, &pod_params, &[]).expect("Failed to parse upvote count predicate");
 
     // Create the query for base case: upvote_count_base(0, content_hash, private: _)
     let content_hash_literal = value_to_podlang_literal(Value::from(content_hash));
     let mut query = simple_predicate.to_string();
     query.push_str(&format!(
-        "REQUEST(upvote_count_base(0, {}))",
+        "REQUEST(upvote_count(0, {}))",
         content_hash_literal
     ));
     println!("Base case query: {}", query);
