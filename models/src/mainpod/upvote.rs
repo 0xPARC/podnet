@@ -449,7 +449,7 @@ pub fn prove_upvote_verification_with_solver(
 
     query.push_str(&format!(
         r#"
-        
+
         REQUEST(
             upvote_verification({username_literal}, {content_hash_literal}, {identity_server_pk_literal})
         )
@@ -528,7 +528,7 @@ pub fn verify_upvote_verification_with_solver(
 
     query.push_str(&format!(
         r#"
-        
+
         REQUEST(
             upvote_verification({username_literal}, {content_hash_literal}, {identity_server_pk_literal})
         )
@@ -601,12 +601,14 @@ pub fn prove_upvote_count_base_with_solver(
 
     upvote_count_query.push_str(&format!(
         r#"
-        
+
         REQUEST(
             upvote_count(0, {content_hash_literal})
         )
         "#
     ));
+
+    log::info!("Upvote count query: {}", upvote_count_query);
 
     // Parse the complete query with the verification batch as a dependency
     let request = parse(
@@ -694,7 +696,7 @@ pub fn prove_upvote_count_inductive_with_solver(
 
     upvote_count_query.push_str(&format!(
         r#"
-        
+
         REQUEST(
             upvote_count({new_count}, {content_hash_literal})
         )
@@ -783,7 +785,7 @@ pub fn verify_upvote_count_with_solver(
 
     upvote_count_query.push_str(&format!(
         r#"
-        
+
         REQUEST(
             upvote_count({expected_count}, {content_hash_literal})
         )

@@ -1722,7 +1722,7 @@ dependencies = [
 [[package]]
 name = "pod2"
 version = "0.1.0"
-source = "git+https://github.com/0xPARC/pod2?branch=playground-tweaks#e5d4d132be90a18786ab4622ce4f5009b20cf583"
+source = "git+https://github.com/0xPARC/pod2?branch=playground-tweaks#df53215bdb985954757ca308aa60a3a44399c425"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1751,7 +1751,7 @@ dependencies = [
 [[package]]
 name = "pod2_solver"
 version = "0.1.0"
-source = "git+https://github.com/0xPARC/pod2-client?branch=value_to_literal#6ae05165de2945fd7bfcc30eed789b6e865fce16"
+source = "git+https://github.com/0xPARC/pod2-client#bceab0843064928d0a93630a79200a0616a96bdc"
 dependencies = [
  "env_logger",
  "hex",
@@ -1799,6 +1799,7 @@ dependencies = [
  "pod2",
  "rand 0.9.1",
  "reqwest",
+ "rusqlite",
  "serde",
  "serde_json",
  "tokio",
@@ -1811,7 +1812,9 @@ dependencies = [
 name = "podnet-models"
 version = "0.1.0"
 dependencies = [
+ "env_logger",
  "hex",
+ "log",
  "num-bigint",
  "pod-utils",
  "pod2",
@@ -2177,7 +2180,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2516,7 +2519,7 @@ dependencies = [
  "getrandom 0.3.3",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3103,7 +3106,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
