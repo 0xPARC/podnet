@@ -1716,7 +1716,7 @@ name = "pod-utils"
 version = "0.1.0"
 dependencies = [
  "log",
- "pod2",
+ "pod2 0.1.0 (git+https://github.com/0xPARC/pod2?rev=df53215bdb985954757ca308aa60a3a44399c425)",
 ]
 
 [[package]]
@@ -1749,16 +1749,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "pod2"
+version = "0.1.0"
+source = "git+https://github.com/0xPARC/pod2?rev=df53215bdb985954757ca308aa60a3a44399c425#df53215bdb985954757ca308aa60a3a44399c425"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "bs58",
+ "dyn-clone",
+ "env_logger",
+ "hashbrown 0.14.5",
+ "hex",
+ "itertools 0.14.0",
+ "lazy_static",
+ "log",
+ "num",
+ "num-bigint",
+ "pest",
+ "pest_derive",
+ "plonky2",
+ "rand 0.8.5",
+ "schemars",
+ "serde",
+ "serde_json",
+ "strum",
+ "strum_macros",
+ "thiserror 2.0.12",
+]
+
+[[package]]
 name = "pod2_solver"
 version = "0.1.0"
-source = "git+https://github.com/0xPARC/pod2-client#bceab0843064928d0a93630a79200a0616a96bdc"
+source = "git+https://github.com/0xPARC/pod2-client#1c9e67b40ebca1db1459e1ee67044f31dd679429"
 dependencies = [
  "env_logger",
  "hex",
  "itertools 0.14.0",
  "log",
  "petgraph",
- "pod2",
+ "pod2 0.1.0 (git+https://github.com/0xPARC/pod2?branch=playground-tweaks)",
  "thiserror 2.0.12",
 ]
 
@@ -1773,7 +1802,7 @@ dependencies = [
  "num-bigint",
  "plonky2",
  "pod-utils",
- "pod2",
+ "pod2 0.1.0 (git+https://github.com/0xPARC/pod2?rev=df53215bdb985954757ca308aa60a3a44399c425)",
  "podnet-models",
  "pulldown-cmark 0.9.6",
  "reqwest",
@@ -1796,7 +1825,7 @@ dependencies = [
  "log",
  "num-bigint",
  "pod-utils",
- "pod2",
+ "pod2 0.1.0 (git+https://github.com/0xPARC/pod2?rev=df53215bdb985954757ca308aa60a3a44399c425)",
  "rand 0.9.1",
  "reqwest",
  "rusqlite",
@@ -1817,7 +1846,7 @@ dependencies = [
  "log",
  "num-bigint",
  "pod-utils",
- "pod2",
+ "pod2 0.1.0 (git+https://github.com/0xPARC/pod2?rev=df53215bdb985954757ca308aa60a3a44399c425)",
  "pod2_solver",
  "serde",
  "serde_json",
@@ -1837,7 +1866,7 @@ dependencies = [
  "num-bigint",
  "plonky2",
  "pod-utils",
- "pod2",
+ "pod2 0.1.0 (git+https://github.com/0xPARC/pod2?rev=df53215bdb985954757ca308aa60a3a44399c425)",
  "podnet-models",
  "pulldown-cmark 0.13.0",
  "rand 0.9.1",

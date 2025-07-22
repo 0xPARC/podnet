@@ -10,7 +10,7 @@ resolver = "2"
 # Only dependencies shared across multiple workspace members
 [workspace.dependencies]
 # Core project dependencies (used by all/most crates)
-pod2 = { git = "https://github.com/0xPARC/pod2", branch = "playground-tweaks", features = [
+pod2 = { git = "https://github.com/0xPARC/pod2", rev = "df53215bdb985954757ca308aa60a3a44399c425", features = [
   "examples",
 ] }
 # pod2 = { path = "../pod2" }
